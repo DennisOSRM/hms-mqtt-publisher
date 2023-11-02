@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+message RealDataResDTO {
+  string ymd_hms = 1;
+  int32 cp = 2;
+  int32 err_code = 3;
+  int32 offset = 4;
+  int32 time = 5;
+}
+
+message InverterState {
+  int64 inv_id = 1;
+  int32 port_id = 2;
+  int32 grid_voltage = 3;     // [V], factor 0.1
+  int32 grid_freq = 4;        // [Hz], factor 0.1
+  int32 pv_current_power = 5; // [W], factor 0.1
+  int32 unknown1 = 7;
+  int32 unknown2 = 8;         // power limit? [%], factor 0.1
+  int32 temperature = 9;      // [C], factor 0.1
+  int32 unknown3 = 10;
+  int32 unknown4 = 12;
+  int32 bit_field = 20;       // a guess
+}
+
+message PortState {
+  int64 pv_sn = 1;            // serial number
+  int32 pv_port = 2;          // id of the port
+  int32 pv_vol = 3;           // [V], factor 0.1
+  int32 pv_cur = 4;           // [A], factor 0.1
+  int32 pv_power = 5;         // [W], factor 0.1
+  int32 pv_energy_total = 6;  // [Wh]
+  int32 pv_daily_yield = 7;   // [Wh]
+  int32 bitfield = 8;         // bitfield is a guess
+}
+
+message HMSStateResponse {
+  bytes dtu_sn = 1;             // serial
+  int32 time = 2;               // epoch
+  int32 device_nub = 3;
+  int32 pv_nub = 4;             // repeats cp field from request
+  int32 package_nub = 5;
+  repeated InverterState inverter_state = 9;
+  repeated PortState port_state = 11;
+  int32 pv_current_power = 12;  // [W], factor 0.1
+  int32 pv_daily_yield = 13;    // [Wh]
+}
