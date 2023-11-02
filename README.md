@@ -8,8 +8,9 @@ The tool is distributed as source only — for now. You’ll have to download, c
 ```
 $ git clone https://github.com/DennisOSRM/hms-mqtt-publisher.git
 $ cd hms-mqtt-publisher
-$ cargo b --release
+$ cargo r --release [inverter] [mqtt broker] [mqtt user] [mqtt password]
 ```
+![image](https://github.com/lumapu/ahoy/assets/1067895/32c0b9b6-5aea-41e3-b9f8-161ce82fb99a)
 
 ### Note of caution
 Please note: The tool does not come with any guarantees and if by chance you fry your inverter with a funny series of bits, you are on your own. That being said, no inverters have been harmed during development. 
