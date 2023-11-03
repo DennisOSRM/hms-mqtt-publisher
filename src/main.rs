@@ -207,7 +207,7 @@ fn main() {
                 InverterState::Online
             }
             Err(e) => {
-                info!("error: {e}");
+                debug!("error: {e}");
                 InverterState::Offline
             }
         };
