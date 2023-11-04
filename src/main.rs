@@ -7,9 +7,9 @@ use crate::protos::hoymiles::RealData::HMSStateResponse;
 use crate::RealData::RealDataResDTO;
 
 use std::error::Error;
+use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
-use std::{fmt, thread};
 use std::{
     io::{Read, Write},
     net::TcpStream,
@@ -19,10 +19,11 @@ use chrono::Local;
 use clap::Parser;
 use crc16::*;
 use env_logger::Builder;
-use log::{debug, info, LevelFilter, warn};
+use log::{debug, info, warn, LevelFilter};
 use protobuf::Message;
 use protos::hoymiles::RealData;
-use rumqttc::{Client, MqttOptions, QoS};
+use rumqttc::{AsyncClient, MqttOptions, QoS};
+use tokio::time;
 
 #[derive(Parser)]
 struct Cli {
@@ -75,7 +76,7 @@ impl fmt::Display for ErrorState {
     }
 }
 
-fn get_inverter_state(sequence: u16, host: &str) -> Result<HMSStateResponse, ErrorState> {
+async fn get_inverter_state(sequence: u16, host: &str) -> Result<HMSStateResponse, ErrorState> {
     let /*mut*/ request = RealDataResDTO::default();
     // let date = Local::now();
     // let time_string = date.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -129,7 +130,7 @@ fn get_inverter_state(sequence: u16, host: &str) -> Result<HMSStateResponse, Err
     Ok(response)
 }
 
-fn send_to_mqtt(hms_state: &HMSStateResponse, client: &mut Client) {
+async fn send_to_mqtt(hms_state: &HMSStateResponse, client: &mut AsyncClient) {
     debug!("{hms_state}");
 
     let pv_current_power = hms_state.pv_current_power as f32 / 10.;
@@ -137,28 +138,36 @@ fn send_to_mqtt(hms_state: &HMSStateResponse, client: &mut Client) {
 
     client
         .subscribe("hms800wt2/pv_current_power", QoS::AtMostOnce)
+        .await
         .unwrap();
-    match client.publish(
-        "hms800wt2/pv_current_power",
-        QoS::AtMostOnce,
-        true,
-        pv_current_power.to_string(),
-    ) {
+    match client
+        .publish(
+            "hms800wt2/pv_current_power",
+            QoS::AtMostOnce,
+            true,
+            pv_current_power.to_string(),
+        )
+        .await
+    {
         Ok(_) => {}
         Err(e) => warn!("mqtt error: {e}"),
     }
-    match client.publish(
-        "hms800wt2/pv_daily_yield",
-        QoS::AtMostOnce,
-        true,
-        pv_daily_yield.to_string(),
-    ) {
+    match client
+        .publish(
+            "hms800wt2/pv_daily_yield",
+            QoS::AtMostOnce,
+            true,
+            pv_daily_yield.to_string(),
+        )
+        .await
+    {
         Ok(_) => {}
         Err(e) => warn!("mqtt error: {e}"),
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     Builder::new()
         .format(|buf, record| {
             writeln!(
@@ -175,7 +184,10 @@ fn main() {
     let cli = Cli::parse();
 
     // set up mqtt connection
-    info!("inverter: {}, mqtt broker {}", cli.inverter_host, cli.mqtt_broker_host);
+    info!(
+        "inverter: {}, mqtt broker {}",
+        cli.inverter_host, cli.mqtt_broker_host
+    );
     let mut mqttoptions = MqttOptions::new("hms800wt2-mqtt-publisher", cli.mqtt_broker_host, 1883);
     mqttoptions.set_keep_alive(Duration::from_secs(5));
 
@@ -189,34 +201,42 @@ fn main() {
         mqttoptions.set_credentials(username, password);
     }
 
-    let (mut client, mut connection) = Client::new(mqttoptions, 10);
-    thread::spawn(move || {
-        // keep polling the event loop to make sure outgoing messages get sent
-        for _ in connection.iter() {}
-    });
+    let (mut client, mut connection) = AsyncClient::new(mqttoptions, 10);
 
     let mut sequence = 0u16;
     let mut current_state = InverterState::Offline;
-    loop {
-        sequence = sequence.wrapping_add(1);
-        // factor out a function that returns a (Response, State);
-        let new_state = match get_inverter_state(sequence, &cli.inverter_host) {
-            Ok(r) => {
-                debug!("{r}");
-                send_to_mqtt(&r, &mut client);
-                InverterState::Online
-            }
-            Err(e) => {
-                debug!("error: {e}");
-                InverterState::Offline
-            }
-        };
+    tokio::spawn(async move {
+        loop {
+            sequence = sequence.wrapping_add(1);
+            // factor out a function that returns a (Response, State);
+            let new_state = match get_inverter_state(sequence, &cli.inverter_host).await {
+                Ok(r) => {
+                    debug!("{r}");
+                    send_to_mqtt(&r, &mut client).await;
+                    InverterState::Online
+                }
+                Err(e) => {
+                    println!("error: {e}");
+                    InverterState::Offline
+                }
+            };
 
-        if current_state != new_state {
-            current_state = new_state;
-            info!("Inverter is {current_state:?}");
+            if current_state != new_state {
+                current_state = new_state;
+                info!("Inverter is {current_state:?}");
+            }
+
+            time::sleep(Duration::from_millis(REQUEST_DELAY)).await;
         }
+    });
 
-        thread::sleep(Duration::from_millis(REQUEST_DELAY));
+    // keep polling the event loop to make sure outgoing messages get sent
+    // for _ in connection.iter() {}
+    loop {
+        let event = connection.poll().await;
+        match &event {
+            Ok(_) => {}
+            Err(_) => {}
+        }
     }
 }
