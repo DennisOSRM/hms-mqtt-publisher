@@ -18,11 +18,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = std::env::var("OUT_DIR")?;
 
     Codegen::new()
-    .pure()
-    .cargo_out_dir("hoymiles")
-    .inputs(proto_files)
-    .include("src/protos")
-    .run_from_script();
+        .pure()
+        .cargo_out_dir("hoymiles")
+        .inputs(proto_files)
+        .include("src/protos")
+        .run_from_script();
 
     std::fs::File::create(out_dir + "/mod.rs")?.write_all(MOD_RS)?;
 
