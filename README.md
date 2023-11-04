@@ -1,6 +1,6 @@
 # hms-mqtt-publisher
 
-This tool fetches the current telemetry information from the HMS-XXXXW-T2 series of micro-inverters and publishes the information in JSON format to an MQTT broker. Please note that it doesn’t implement a DTU, but pulls the information off the internal DTU of these inverters. 
+This tool fetches the current telemetry information from the HMS-XXXXW-T2 series of micro-inverters and publishes the information into an MQTT broker. Please note that it doesn’t implement a DTU, but pulls the information off the internal DTU of these inverters. 
 
 ### How to run
 The tool is distributed as source only — for now. You’ll have to download, compile and run it yourself. 
