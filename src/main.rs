@@ -23,6 +23,7 @@ use log::{debug, info, warn, LevelFilter};
 use protobuf::Message;
 use protos::hoymiles::RealData;
 use rumqttc::{AsyncClient, MqttOptions, QoS};
+use tokio::sync::mpsc;
 use tokio::time;
 
 #[derive(Parser)]
@@ -191,7 +192,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut mqttoptions = MqttOptions::new("hms800wt2-mqtt-publisher", cli.mqtt_broker_host, 1883);
     mqttoptions.set_keep_alive(Duration::from_secs(5));
 
-    //parse the mqtt authentication options
+    // parse the mqtt authentication options
     if let Some((username, password)) = match (cli.mqtt_username, cli.mqtt_password) {
         (None, None) => None,
         (None, Some(_)) => None,
@@ -201,22 +202,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         mqttoptions.set_credentials(username, password);
     }
 
+    let (tx, mut rx) = mpsc::channel(10);
+
     let (mut client, mut connection) = AsyncClient::new(mqttoptions, 10);
 
-    let mut sequence = 0u16;
-    let mut current_state = InverterState::Offline;
     tokio::spawn(async move {
+        let mut sequence = 0u16;
+        let mut current_state = InverterState::Offline;
         loop {
             sequence = sequence.wrapping_add(1);
-            // factor out a function that returns a (Response, State);
             let new_state = match get_inverter_state(sequence, &cli.inverter_host).await {
                 Ok(r) => {
-                    debug!("{r}");
-                    send_to_mqtt(&r, &mut client).await;
+                    // debug!("{r}");
+                    if let Err(e) = tx.send(r).await {
+                        warn!("receiver dropped message: {e}");
+                    }
                     InverterState::Online
                 }
                 Err(e) => {
-                    println!("error: {e}");
+                    warn!("error: {e}");
                     InverterState::Offline
                 }
             };
@@ -231,12 +235,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // keep polling the event loop to make sure outgoing messages get sent
-    // for _ in connection.iter() {}
-    loop {
-        let event = connection.poll().await;
-        match &event {
-            Ok(_) => {}
-            Err(_) => {}
+    tokio::spawn(async move {
+        loop {
+            match connection.poll().await {
+                Ok(_) => {}
+                Err(e) => {
+                    debug!("{e}");
+                }
+            }
         }
+    });
+
+    // service update events
+    while let Some(r) = rx.recv().await {
+        send_to_mqtt(&r, &mut client).await;
     }
+
+    Ok(())
 }
