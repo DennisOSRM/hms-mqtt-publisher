@@ -50,18 +50,19 @@ fn main() {
         cli.inverter_host, cli.mqtt_broker_host
     );
 
+    let mut inverter = Inverter::new(&cli.inverter_host);
+
     let mut mqtt = Mqtt::new(
         &cli.mqtt_broker_host,
         &cli.mqtt_username,
         &cli.mqtt_password,
     );
 
-    let mut inverter = Inverter::new(&cli.inverter_host);
-
     loop {
         if let Some(r) = inverter.update_state() {
             mqtt.publish(&r);
         }
+
         // TODO: this has to move into the Inverter struct in an async implementation
         thread::sleep(Duration::from_millis(REQUEST_DELAY));
     }
