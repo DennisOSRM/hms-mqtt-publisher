@@ -14,8 +14,13 @@ pub struct Mqtt {
 }
 
 impl Mqtt {
-    pub fn new(host: &str, username: &Option<String>, password: &Option<String>) -> Self {
-        let mut mqttoptions = MqttOptions::new("hms800wt2-mqtt-publisher", host, 1883);
+    pub fn new(
+        host: &str,
+        username: &Option<String>,
+        password: &Option<String>,
+        port: u16,
+    ) -> Self {
+        let mut mqttoptions = MqttOptions::new("hms800wt2-mqtt-publisher", host, port);
         mqttoptions.set_keep_alive(Duration::from_secs(5));
 
         //parse the mqtt authentication options
