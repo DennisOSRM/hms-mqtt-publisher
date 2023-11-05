@@ -24,6 +24,8 @@ struct Cli {
     mqtt_broker_host: String,
     mqtt_username: Option<String>,
     mqtt_password: Option<String>,
+    #[clap(default_value = "1883")]
+    mqtt_broker_port: u16,
 }
 
 static REQUEST_DELAY: u64 = 30_500;
@@ -56,6 +58,7 @@ fn main() {
         &cli.mqtt_broker_host,
         &cli.mqtt_username,
         &cli.mqtt_password,
+        cli.mqtt_broker_port,
     );
 
     loop {
