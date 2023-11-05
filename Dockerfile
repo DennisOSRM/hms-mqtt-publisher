@@ -18,4 +18,4 @@ FROM debian:bullseye-slim
 COPY --from=builder /usr/local/cargo/bin/hms-mqtt-publish /usr/local/bin/hms-mqtt-publish
 
 # Run the application with given env variables
-CMD hms-mqtt-publish $INVERTER_HOST $MQTT_BROKER_HOST $MQTT_USERNAME $MQTT_PASSWORD
+CMD hms-mqtt-publish $INVERTER_HOST $MQTT_BROKER_HOST $MQTT_USERNAME $MQTT_PASSWORD $MQTT_PORT
