@@ -1,3 +1,4 @@
+---
 name: Hoymiles HMS Wifi Addon
 version: '0.1'
 slug: ha-hoymiles-wifi-addon
@@ -22,9 +23,3 @@ schema:                            # Schema validation for the options.
   mqtt_username: str
   mqtt_password: str
   mqtt_port: int
-environment:                       # Environment variables for the add-on.
-  INVERTER_HOST: 'options.inverter_host'
-  MQTT_BROKER_HOST: 'options.mqtt_broker_host'
-  MQTT_USERNAME: 'options.mqtt_username'
-  MQTT_PASSWORD: 'options.mqtt_password'
-  MQTT_PORT: 'options.mqtt_port'
