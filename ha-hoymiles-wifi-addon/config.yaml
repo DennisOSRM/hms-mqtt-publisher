@@ -1,0 +1,25 @@
+---
+name: Hoymiles HMS Wifi Addon
+version: '0.1'
+slug: ha-hoymiles-wifi-addon
+description: Publishes telemetry information from Hoymiles HMS-XXXXW-T2 micro-inverters to your home assistant MQTT broker
+url: https://github.com/dominikandreas/hms-mqtt-publisher/tree/master/ha-hoymiles-wifi-addon
+init: false
+arch:                              # List of supported architectures.
+  - armv7
+  - aarch64
+  - amd64
+startup: application              # When the add-on should start.
+boot: auto                        # Boot options, auto or manual.
+options:                          # Default options value for the add-on.
+  inverter_host: ''
+  mqtt_broker_host: ''
+  mqtt_username: ''
+  mqtt_password: ''
+  mqtt_port: 1883
+schema:                            # Schema validation for the options.
+  inverter_host: str
+  mqtt_broker_host: str
+  mqtt_username: str
+  mqtt_password: str
+  mqtt_port: int
