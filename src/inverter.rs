@@ -1,5 +1,6 @@
 use crate::protos::hoymiles::RealData::HMSStateResponse;
 use crate::RealData::RealDataResDTO;
+use clap::ValueEnum;
 use crc16::*;
 use log::{debug, info};
 use protobuf::Message;
@@ -17,18 +18,27 @@ pub enum NetworkState {
     Offline,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum Mode {
+    Cooperative,
+    Exclusive,
+}
+
 pub struct Inverter<'a> {
     host: &'a str,
     state: NetworkState,
     sequence: u16,
+    _mode: Mode,
 }
 
 impl<'a> Inverter<'a> {
-    pub fn new(host: &'a str) -> Self {
+    pub fn new(host: &'a str, mode: Mode) -> Self {
+        info!("Inverter communication mode: {mode:?}");
         Self {
             host,
             state: NetworkState::Unknown,
             sequence: 0_u16,
+            _mode: mode,
         }
     }
 

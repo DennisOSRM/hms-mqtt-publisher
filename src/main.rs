@@ -15,6 +15,7 @@ use std::time::Duration;
 use chrono::Local;
 use clap::Parser;
 use env_logger::Builder;
+use inverter::Mode;
 use log::{info, LevelFilter};
 use protos::hoymiles::RealData;
 
@@ -26,6 +27,8 @@ struct Cli {
     mqtt_password: Option<String>,
     #[clap(default_value = "1883")]
     mqtt_broker_port: u16,
+    #[clap(value_enum, default_value = "cooperative")]
+    inverter_mode: Mode,
 }
 
 static REQUEST_DELAY: u64 = 30_500;
@@ -52,7 +55,7 @@ fn main() {
         cli.inverter_host, cli.mqtt_broker_host
     );
 
-    let mut inverter = Inverter::new(&cli.inverter_host);
+    let mut inverter = Inverter::new(&cli.inverter_host, cli.inverter_mode);
 
     let mut mqtt = Mqtt::new(
         &cli.mqtt_broker_host,
