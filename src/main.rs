@@ -4,18 +4,17 @@
 mod inverter;
 mod mqtt;
 mod protos;
+mod logging;
 
 use crate::inverter::Inverter;
 use crate::mqtt::{MetricCollector, Mqtt};
+use crate::logging::init_logger;
 
-use std::io::Write;
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
 use clap::Parser;
-use env_logger::Builder;
-use log::{info, LevelFilter};
+use log::info;
 use protos::hoymiles::RealData;
 
 #[derive(Parser)]
@@ -26,24 +25,15 @@ struct Cli {
     mqtt_password: Option<String>,
     #[clap(default_value = "1883")]
     mqtt_broker_port: u16,
+    // the following adds a flag for testing mode (mock data)
+    #[clap(short, long, default_value = "false")]
+    test: bool
 }
 
 static REQUEST_DELAY: u64 = 30_500;
 
 fn main() {
-    Builder::new()
-        .format(|buf, record| {
-            writeln!(
-                buf,
-                "{} [{}] - {}",
-                Local::now().format("%Y-%m-%dT%H:%M:%S"),
-                record.level(),
-                record.args()
-            )
-        })
-        .filter(None, LevelFilter::Info)
-        .init();
-
+    init_logger();
     let cli = Cli::parse();
 
     // set up mqtt connection
@@ -62,11 +52,15 @@ fn main() {
     );
 
     loop {
-        if let Some(r) = inverter.update_state() {
+        if let Some(r) = inverter.update_state(cli.test) {
             mqtt.publish(&r);
         }
 
         // TODO: this has to move into the Inverter struct in an async implementation
-        thread::sleep(Duration::from_millis(REQUEST_DELAY));
+        if !cli.test{
+            thread::sleep(Duration::from_millis(REQUEST_DELAY));
+        } else {
+            thread::sleep(Duration::from_millis(1000));
+        }
     }
 }
