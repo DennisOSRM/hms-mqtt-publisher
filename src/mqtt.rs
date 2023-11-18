@@ -21,8 +21,8 @@ pub struct Mqtt {
 /// Provide utility functions to extract data from the struct.
 impl HMSStateResponse {
     fn get_model(&self) -> String {
-         // TODO: identify model from dtu_sn
-        "HMS-800W-T2".to_string()
+         // TODO: figure out a way to properly identify the model
+        format!("HMS-WiFi")
     }
 
     fn get_name(&self) -> String {
@@ -103,7 +103,7 @@ impl DeviceConfig {
             model,
             identifiers,
             manufacturer: "Hoymiles".to_string(),
-            /// Rust compiler sets the CARGO_PKG_VERSION environment from the Cargo.toml . 
+            // Rust compiler sets the CARGO_PKG_VERSION environment from the Cargo.toml . 
             sw_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
