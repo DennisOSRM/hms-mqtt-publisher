@@ -25,9 +25,6 @@ struct Cli {
     mqtt_password: Option<String>,
     #[clap(default_value = "1883")]
     mqtt_broker_port: u16,
-    // the following adds a flag for testing mode (mock data)
-    #[clap(short, long, default_value = "false")]
-    test: bool
 }
 
 static REQUEST_DELAY: u64 = 30_500;
@@ -52,15 +49,11 @@ fn main() {
     );
 
     loop {
-        if let Some(r) = inverter.update_state(cli.test) {
+        if let Some(r) = inverter.update_state() {
             mqtt.publish(&r);
         }
 
         // TODO: this has to move into the Inverter struct in an async implementation
-        if !cli.test{
-            thread::sleep(Duration::from_millis(REQUEST_DELAY));
-        } else {
-            thread::sleep(Duration::from_millis(1000));
-        }
+        thread::sleep(Duration::from_millis(REQUEST_DELAY));
     }
 }

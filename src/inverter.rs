@@ -1,6 +1,5 @@
-use crate::protos::hoymiles::RealData::{HMSStateResponse, PortState, InverterState};
+use crate::protos::hoymiles::RealData::HMSStateResponse;
 use crate::RealData::RealDataResDTO;
-use chrono::Timelike;
 use crc16::*;
 use log::{debug, info};
 use protobuf::Message;
@@ -39,43 +38,8 @@ impl<'a> Inverter<'a> {
             info!("Inverter is {new_state:?}");
         }
     }
-
-    pub fn mock_state(&mut self) -> Option<HMSStateResponse> {
-        // generate mock data varying with time of day
-
-        let mut response = HMSStateResponse::default();
-        response.dtu_sn = Vec::from("12345678901234567890123456789012");
-        // seconds since start of the day
-        let seconds = chrono::Local::now().num_seconds_from_midnight() as u32;
-        let seconds_current_hour = seconds % 60;
-        // multiplier is sin(seconds) + 1 
-        let time_factor = (seconds_current_hour as f32 * 3.14 / 30.0).sin() + 1.0;
-
-        response.pv_current_power = (2280. * time_factor) as i32;
-        response.pv_daily_yield = (seconds / 360) as i32;
-
-        let mut port_state = PortState::default();
-        port_state.pv_port = 1;
-        port_state.pv_power = (2280. * time_factor) as i32;
-        port_state.pv_vol = (456. * time_factor) as i32;
-        port_state.pv_cur =(5. * time_factor) as i32;
-        port_state.pv_daily_yield = response.pv_daily_yield / 2;
-        port_state.pv_energy_total = response.pv_daily_yield + 456;
-        response.port_state.push(port_state);
-        let mut inverter_state = InverterState::default();
-        inverter_state.port_id = 1;
-        inverter_state.grid_voltage = (2270. + time_factor * 2.) as i32;
-        inverter_state.grid_freq = (490. + time_factor) as i32;
-        inverter_state.pv_current_power = response.pv_current_power;
-        //append to inverter state
-        response.inverter_state.push(inverter_state);
-        Some(response)
-    }
-
-    pub fn update_state(&mut self, mock_data:bool) -> Option<HMSStateResponse> {
-        if mock_data {
-            return self.mock_state();
-        }
+    
+    pub fn update_state(&mut self) -> Option<HMSStateResponse> {
         self.sequence = self.sequence.wrapping_add(1);
 
         let /*mut*/ request = RealDataResDTO::default();
