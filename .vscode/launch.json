@@ -1,0 +1,21 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        // compile and debug src/main.rs
+        {
+            "name": "Debug src/main.rs",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": ["build", "--bin=hms-mqtt-publish"], // Cargo command line to build the debug target
+                // The rest are optional
+                "env": {  }, // Extra environment variables.
+                "problemMatcher": "$rustc",                 // Problem matcher(s) to apply to cargo output.
+            },
+            "args": ["<insert arguments here>"],            // Arguments to pass to the program.
+        },
+    ]
+}
