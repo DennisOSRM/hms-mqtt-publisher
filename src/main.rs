@@ -5,6 +5,7 @@ mod inverter;
 mod mqtt;
 mod protos;
 mod logging;
+mod mqtt_schemas;
 
 use crate::inverter::Inverter;
 use crate::mqtt::{MetricCollector, Mqtt};
