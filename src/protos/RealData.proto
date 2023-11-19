@@ -12,7 +12,7 @@ message InverterState {
   int64 inv_id = 1;
   int32 port_id = 2;
   int32 grid_voltage = 3;     // [V], factor 0.1
-  int32 grid_freq = 4;        // [Hz], factor 0.1
+  int32 grid_freq = 4;        // [Hz], factor 0.01
   int32 pv_current_power = 5; // [W], factor 0.1
   int32 unknown1 = 7;
   int32 unknown2 = 8;         // power limit? [%], factor 0.1

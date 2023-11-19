@@ -1,6 +1,7 @@
 use std::{thread, time::Duration};
 
-use crate::{protos::hoymiles::RealData::{HMSStateResponse, InverterState}, mqtt_schemas::DeviceConfig};
+use crate::protos::hoymiles::RealData::HMSStateResponse;
+use crate::mqtt_schemas::DeviceConfig;
 
 use rumqttc::{Client, MqttOptions, QoS};
 use serde_json::json;
@@ -103,21 +104,15 @@ impl HMSStateResponse {
         self.dtu_sn[..8].to_string()
     }
 
-    fn compute_efficiency(module_power: f32, inverter_power: f32) -> f32 {
-        if module_power > 0.0 {inverter_power / module_power * 100.0} else { 0.0}
-    }
-
     fn get_total_efficiency(&self) -> f32{
         let total_module_power: f32 = self.port_state.iter().map(
             |port| port.pv_power as f32
         ).sum();
-        Self::compute_efficiency(total_module_power, self.pv_current_power as f32)
-    }
-
-    fn get_inverter(&self, pv_port: i32) -> InverterState {
-        self.inverter_state.iter().find(
-            |inv| inv.port_id == pv_port
-        ).unwrap_or(&InverterState::default()).clone()
+        if total_module_power > 0.0 {
+            self.pv_current_power as f32 / total_module_power * 100.0
+        } else { 
+            0.0
+        }
     }
 
     fn to_json_payload(&self) -> serde_json::Value {
@@ -126,7 +121,7 @@ impl HMSStateResponse {
             "dtu_sn": self.dtu_sn,
             "pv_current_power": format!("{:.2}", self.pv_current_power as f32 * 0.1),
             "pv_daily_yield": self.pv_daily_yield,
-            "efficiency": self.get_total_efficiency()
+            "efficiency": format!("{:.2}", self.get_total_efficiency())
         });
 
         // Convert each PortState to json
@@ -136,17 +131,13 @@ impl HMSStateResponse {
             json[format!("pv_{}_power", port.pv_port)] = format!("{:.2}", port.pv_power as f32 * 0.1).into();
             json[format!("pv_{}_energy_total", port.pv_port)] = port.pv_energy_total.into();
             json[format!("pv_{}_daily_yield", port.pv_port)] = port.pv_daily_yield.into();
-            
-            let inverter = &self.get_inverter(port.pv_port);
-
-            json[format!("inv_{}_grid_voltage", port.pv_port)] = format!("{:.2}", inverter.grid_voltage as f32 * 0.1).into();
-            json[format!("inv_{}_grid_freq", port.pv_port)] = format!("{:.2}", inverter.grid_freq as f32 * 0.1).into();
-            json[format!("inv_{}_pv_current_power", port.pv_port)] = format!("{:.2}", inverter.pv_current_power as f32 * 0.1).into();
-            json[format!("inv_{}_temperature", port.pv_port)] = format!("{:.2}", inverter.temperature as f32 * 0.1).into();
-
-            // Efficiency: Requires data from both PortState and InverterState
-            let efficiency = Self::compute_efficiency(port.pv_power as f32, inverter.pv_current_power as f32);
-            json[format!("inv_{}_efficiency", port.pv_port)] = format!("{:.2}", efficiency).into();
+        }
+        // Convert each InverterState to json (for a HMS-XXXW-2T, there is only one inverter)
+        for inverter in self.inverter_state.iter() {
+            json[format!("inv_{}_grid_voltage", inverter.port_id)] = format!("{:.2}", inverter.grid_voltage as f32 * 0.1).into();
+            json[format!("inv_{}_grid_freq", inverter.port_id)] = format!("{:.2}", inverter.grid_freq as f32 * 0.01).into();
+            json[format!("inv_{}_pv_current_power", inverter.port_id)] = format!("{:.2}", inverter.pv_current_power as f32 * 0.1).into();
+            json[format!("inv_{}_temperature", inverter.port_id)] = format!("{:.2}", inverter.temperature as f32 * 0.1).into();
         }
 
         json
@@ -178,10 +169,15 @@ impl HMSStateResponse {
                 SensorConfig::current(state_topic, &device_config, &format!("PV {} Current", idx), &format!("pv_{}_cur", idx)),
                 SensorConfig::energy(state_topic, &device_config, &format!("PV {} Daily Yield", idx), &format!("pv_{}_daily_yield", idx)),
                 SensorConfig::energy(state_topic, &device_config, &format!("PV {} Energy Total", idx), &format!("pv_{}_energy_total", idx)),
-
-                SensorConfig::efficiency(state_topic, &device_config, &format!("Inverter {} Efficiency", idx), &format!("inv_{}_efficiency", idx)),
+            ]);
+        }
+        for inverter in &self.inverter_state {
+            let idx = inverter.port_id;
+            sensors.extend([
                 SensorConfig::power(state_topic, &device_config, &format!("Inverter {} Power", idx), &format!("inv_{}_pv_current_power", idx)),
-                SensorConfig::temperature(state_topic, &device_config, &format!("Inverter {} Temperature", idx), &format!("inv_{}_temperature", idx))
+                SensorConfig::temperature(state_topic, &device_config, &format!("Inverter {} Temperature", idx), &format!("inv_{}_temperature", idx)),
+                SensorConfig::voltage(state_topic, &device_config, &format!("Inverter {} Grid Voltage", idx), &format!("inv_{}_grid_voltage", idx)),
+                SensorConfig::frequency(state_topic, &device_config, &format!("Inverter {} Grid Frequency", idx), &format!("inv_{}_grid_freq", idx)),
             ]);
         }
         sensors

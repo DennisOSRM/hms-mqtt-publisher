@@ -106,4 +106,9 @@ impl SensorConfig {
             None, Some("%".to_string()))
     }
 
+    pub fn frequency(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            Some("frequency".to_string()), Some("Hz".to_string()))
+    }
+
 }
