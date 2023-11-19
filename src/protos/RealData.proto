@@ -34,7 +34,7 @@ message PortState {
 }
 
 message HMSStateResponse {
-  bytes dtu_sn = 1;             // serial
+  string dtu_sn = 1;             // serial
   int32 time = 2;               // epoch
   int32 device_nub = 3;
   int32 pv_nub = 4;             // repeats cp field from request

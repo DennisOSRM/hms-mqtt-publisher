@@ -100,18 +100,18 @@ impl HMSStateResponse {
     }
 
     fn short_dtu_sn(&self) -> String {
-        self.dtu_sn.iter().take(8).map(|v| v.to_string()).collect::<String>()
+        self.dtu_sn[..8].to_string()
+    }
+
+    fn compute_efficiency(module_power: f32, inverter_power: f32) -> f32 {
+        if module_power > 0.0 {inverter_power / module_power * 100.0} else { 0.0}
     }
 
     fn get_total_efficiency(&self) -> f32{
-        let total_input_power: f32 = self.port_state.iter()
-        .map(|port| port.pv_power as f32).sum();
-    
-        if total_input_power > 0.0 {
-            return (self.pv_current_power as f32) / total_input_power * 100.0
-        } else {
-            return 0.0
-        };
+        let total_module_power: f32 = self.port_state.iter().map(
+            |port| port.pv_power as f32
+        ).sum();
+        Self::compute_efficiency(total_module_power, self.pv_current_power as f32)
     }
 
     fn get_inverter(&self, pv_port: i32) -> InverterState {
@@ -123,10 +123,10 @@ impl HMSStateResponse {
     fn to_json_payload(&self) -> serde_json::Value {
         // when modifying this function, modify the sensor config in create_device_config accordingly
         let mut json = json!({
-            "dtu_sn": self.dtu_sn.iter().map(|v| v.to_string()).collect::<String>(),
+            "dtu_sn": self.dtu_sn,
             "pv_current_power": format!("{:.2}", self.pv_current_power as f32 * 0.1),
             "pv_daily_yield": self.pv_daily_yield,
-            "efficiency": self.get_total_efficiency(),
+            "efficiency": self.get_total_efficiency()
         });
 
         // Convert each PortState to json
@@ -145,7 +145,7 @@ impl HMSStateResponse {
             json[format!("inv_{}_temperature", port.pv_port)] = format!("{:.2}", inverter.temperature as f32 * 0.1).into();
 
             // Efficiency: Requires data from both PortState and InverterState
-            let efficiency = (port.pv_power as f32) / (inverter.pv_current_power as f32) * 100.0;
+            let efficiency = Self::compute_efficiency(port.pv_power as f32, inverter.pv_current_power as f32);
             json[format!("inv_{}_efficiency", port.pv_port)] = format!("{:.2}", efficiency).into();
         }
 
@@ -158,7 +158,7 @@ impl HMSStateResponse {
         let device_config = DeviceConfig::new(
             self.get_name(),
             self.get_model(),
-            Vec::from([format!("{}_{}", self.get_model(), self.short_dtu_sn())]),
+            Vec::from([format!("hms_{}", self.short_dtu_sn())]),
         );
 
         // Sensors for the whole inverter
@@ -166,7 +166,7 @@ impl HMSStateResponse {
             SensorConfig::string(state_topic, &device_config, "DTU Serial Number", "dtu_sn"),
             SensorConfig::power(state_topic, &device_config, "Total Power", "pv_current_power"),
             SensorConfig::energy(state_topic, &device_config, "Total Daily Yield", "pv_daily_yield"),
-            SensorConfig::energy(state_topic, &device_config, "Efficiency", "efficiency")
+            SensorConfig::efficiency(state_topic, &device_config, "Efficiency", "efficiency")
         ]);
 
         // Sensors for each pv string

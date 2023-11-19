@@ -40,13 +40,14 @@ impl DeviceConfig {
 ///
 #[derive(Serialize)]
 pub struct SensorConfig {
-    unique_id: String, //  A globally unique identifier for the sensor.
+    pub unique_id: String, //  A globally unique identifier for the sensor.
     name: String,  // The name of the sensor.
     state_topic: String, // The MQTT topic where sensor readings will be published.
-    unit_of_measurement: String,  // The unit of measurement of the sensor.
     value_template: String, // A template to extract a value from the mqtt message.
     device: DeviceConfig,  // The device that the sensor belongs to, used to group entities together.
-    // exclude field if they are empty
+    // exclude optional if they are not provided
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unit_of_measurement: Option<String>,  // The unit of measurement of the sensor.
     #[serde(skip_serializing_if = "Option::is_none")]
     device_class: Option<String>,  // The type/class of the sensor, e.g. energy, power, temperature, etc.
 }
@@ -55,50 +56,54 @@ pub struct SensorConfig {
 impl SensorConfig {
     pub fn new_sensor(
         state_topic: &str, device_config: &DeviceConfig, unique_id: &str, name: &str, 
-        device_class: &str, unit_of_measurement: &str
+        device_class: Option<String>, unit_of_measurement: Option<String>
     ) -> Self {
         let value_template = format!("{{{{ value_json.{} }}}}", unique_id);
-        let mut _device_class = None;
-        if device_class != "" {
-            _device_class = Some(device_class.to_string());
-        }
+        let unique_id = format!("{}_{}", device_config.identifiers[0], unique_id);
         SensorConfig {
-            unique_id: unique_id.to_string(), 
+            unique_id, 
             name: name.to_string(),
             state_topic: state_topic.to_string(),
-            unit_of_measurement: unit_of_measurement.to_string(),
-            device_class: _device_class,
+            unit_of_measurement,
+            device_class,
             value_template,
             device: device_config.clone()
         }
     }
 
     pub fn string(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, "", "")
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            None, None)
     }
 
     pub fn power(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, "power", "W")
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            Some("power".to_string()), Some("W".to_string()))
     }
 
     pub fn energy(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, "energy", "Wh")
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            Some("energy".to_string()), Some("Wh".to_string()))
     }
 
     pub fn voltage(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, "voltage", "V")
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            Some("voltage".to_string()), Some("V".to_string()))
     }
 
     pub fn current(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, "current", "A")
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            Some("current".to_string()), Some("A".to_string()))
     }
 
     pub fn temperature(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, "temperature", "°C")
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            Some("temperature".to_string()), Some("°C".to_string()))
     }
 
     pub fn efficiency(state_topic: &str, device_config: &DeviceConfig,  name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, "", "%")
+        Self::new_sensor(state_topic, &device_config, key, name, 
+            None, Some("%".to_string()))
     }
 
 }
