@@ -3,11 +3,10 @@ FROM rust:slim-bullseye as builder
 
 WORKDIR /usr/src/hms-mqtt-publish
 
-# The following builds the rust application in three stages:
+# The following builds the rust application in two stages:
 #
 # 1. Build the dependencies
-# 2. Build the protobuf files
-# 3. Build the application
+# 2. Build the application
 # 
 # This way, each stage is cached and rebuilding the application is faster.
 
@@ -22,21 +21,7 @@ RUN mkdir src && \
 
 # Stage 2: Build the protobuf files
 
-RUN mkdir src/protos
-# Copy build.rs and Protobuf files
 COPY ./build.rs ./
-COPY ./src/protos/*.proto ./src/protos/
-
-# Run the build script to generate code from Protobuf files
-RUN echo "fn main() {println!(\"hello from protbuf build\")}" > src/main.rs && \
-    cargo build --release
-
-
-# Stage 3: Compile the application and install it
-
-# This touch command is important to ensure that the build.rs is considered changed
-RUN touch build.rs
-# Now copy the actual source code and re-compile
 COPY ./src ./src
 RUN cargo install --path .
 
