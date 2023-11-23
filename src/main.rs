@@ -2,56 +2,69 @@
 // TODO: support publishing to S-Miles cloud, too
 
 mod inverter;
-mod mqtt;
-mod protos;
 mod logging;
+mod metric_collector;
+mod mqtt;
+mod mqtt_config;
 mod mqtt_schemas;
+mod protos;
+mod simple_mqtt;
 
 use crate::inverter::Inverter;
-use crate::mqtt::{MetricCollector, Mqtt};
 use crate::logging::init_logger;
+use crate::metric_collector::MetricCollector;
+use crate::mqtt::Mqtt;
+use crate::simple_mqtt::SimpleMqtt;
 
+use mqtt_config::MqttConfig;
+use serde_derive::Deserialize;
+use std::fs;
 use std::thread;
 use std::time::Duration;
 
-use clap::Parser;
-use log::info;
+use log::{error, info};
 use protos::hoymiles::RealData;
 
-#[derive(Parser)]
-struct Cli {
+#[derive(Debug, Deserialize)]
+struct Config {
     inverter_host: String,
-    mqtt_broker_host: String,
-    mqtt_username: Option<String>,
-    mqtt_password: Option<String>,
-    #[clap(default_value = "1883")]
-    mqtt_broker_port: u16,
+    home_assistent: Option<MqttConfig>,
+    simple_mqtt: Option<MqttConfig>,
 }
 
 static REQUEST_DELAY: u64 = 30_500;
 
 fn main() {
     init_logger();
-    let cli = Cli::parse();
 
-    // set up mqtt connection
-    info!(
-        "inverter: {}, mqtt broker {}",
-        cli.inverter_host, cli.mqtt_broker_host
-    );
+    if std::env::args().len() > 1 {
+        error!("Arguments passed. Tool is configured by config.toml in its path");
+    }
 
-    let mut inverter = Inverter::new(&cli.inverter_host);
+    let filename = "config.toml";
+    let contents = fs::read_to_string(filename).expect("Could not read config.toml");
+    let config: Config = toml::from_str(&contents).expect("toml config unparsable");
 
-    let mut mqtt = Mqtt::new(
-        &cli.mqtt_broker_host,
-        &cli.mqtt_username,
-        &cli.mqtt_password,
-        cli.mqtt_broker_port,
-    );
+    info!("inverter host: {}", config.inverter_host);
+
+    let mut inverter = Inverter::new(&config.inverter_host);
+
+    let mut output_channels: Vec<Box<dyn MetricCollector>> = Vec::new();
+    if let Some(config) = config.home_assistent {
+        info!("Publishing to Home Assistent");
+        output_channels.push(Box::new(Mqtt::new(&config)));
+    }
+
+    if let Some(config) = config.simple_mqtt {
+        info!("Publishing to simple MQTT broker");
+        output_channels.push(Box::new(SimpleMqtt::new(&config)));
+    }
 
     loop {
         if let Some(r) = inverter.update_state() {
-            mqtt.publish(&r);
+            output_channels.iter_mut().for_each(|channel| {
+                channel.publish(&r);
+            })
         }
 
         // TODO: this has to move into the Inverter struct in an async implementation

@@ -1,16 +1,13 @@
 use std::{thread, time::Duration};
 
-use crate::protos::hoymiles::RealData::HMSStateResponse;
+use crate::{protos::hoymiles::RealData::HMSStateResponse, mqtt_config::MqttConfig};
 use crate::mqtt_schemas::DeviceConfig;
 
 use rumqttc::{Client, MqttOptions, QoS};
 use serde_json::json;
 use crate::mqtt_schemas::SensorConfig;
+use crate::metric_collector::MetricCollector;
 use log::{error, debug};
-
-pub trait MetricCollector {
-    fn publish(&mut self, hms_state: &HMSStateResponse);
-}
 
 pub struct Mqtt {
     client: Client,
@@ -19,17 +16,14 @@ pub struct Mqtt {
 
 impl Mqtt {
     pub fn new(
-        host: &str,
-        username: &Option<String>,
-        password: &Option<String>,
-        port: u16,
+        config: &MqttConfig,
     ) -> Self {
         let this_host = hostname::get().unwrap().into_string().unwrap();
-        let mut mqttoptions = MqttOptions::new(format!("hms-mqtt-publisher_{}", this_host), host, port);
+        let mut mqttoptions = MqttOptions::new(format!("hms-mqtt-publisher_{}", this_host), &config.host, config.port.unwrap_or(1883));
         mqttoptions.set_keep_alive(Duration::from_secs(5));
 
         //parse the mqtt authentication options
-        if let Some((username, password)) = match (username, password) {
+        if let Some((username, password)) = match (&config.username, &config.password) {
             (None, None) => None,
             (None, Some(_)) => None,
             (Some(username), None) => Some((username.clone(), "".into())),
