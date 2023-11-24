@@ -4,19 +4,19 @@
 mod inverter;
 mod mqtt;
 mod protos;
+mod logging;
+mod mqtt_schemas;
 
 use crate::inverter::Inverter;
 use crate::mqtt::{MetricCollector, Mqtt};
+use crate::logging::init_logger;
 
-use std::io::Write;
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
 use clap::Parser;
-use env_logger::Builder;
 use inverter::Mode;
-use log::{info, LevelFilter};
+use log::info;
 use protos::hoymiles::RealData;
 
 #[derive(Parser)]
@@ -34,19 +34,7 @@ struct Cli {
 static REQUEST_DELAY: u64 = 30_500;
 
 fn main() {
-    Builder::new()
-        .format(|buf, record| {
-            writeln!(
-                buf,
-                "{} [{}] - {}",
-                Local::now().format("%Y-%m-%dT%H:%M:%S"),
-                record.level(),
-                record.args()
-            )
-        })
-        .filter(None, LevelFilter::Info)
-        .init();
-
+    init_logger();
     let cli = Cli::parse();
 
     // set up mqtt connection

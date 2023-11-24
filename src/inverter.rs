@@ -48,7 +48,7 @@ impl<'a> Inverter<'a> {
             info!("Inverter is {new_state:?}");
         }
     }
-
+    
     pub fn update_state(&mut self) -> Option<HMSStateResponse> {
         self.sequence = self.sequence.wrapping_add(1);
 
