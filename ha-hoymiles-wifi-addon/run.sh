@@ -31,23 +31,23 @@ if [[ -z "$MQTT_BROKER_HOST" ]]; then
   exit 1
 fi
 
-if [[ -z "$MQTT_USERNAME" ]]; then
-  echo "The mqtt_username is not configured."
-  exit 1
-fi
-
-if [[ -z "$MQTT_PASSWORD" ]]; then
-  echo "The mqtt_password is not configured."
-  exit 1
-fi
-
-# Write configuration to config.toml
+# The host names are mandatory information
 echo "inverter_host = \"$INVERTER_HOST\" \n\
 \n\
 [home_assistent] \n\
-host = \"$MQTT_BROKER_HOST\"\n\
-username = \"$MQTT_USERNAME\"\n\
-password = \"$MQTT_PASSWORD\"\n" > /usr/local/bin/config.toml
+host = \"$MQTT_BROKER_HOST\"\n"
+
+# Write mqtt broker username if specified
+if [[ -n "$MQTT_USERNAME" ]]; then
+  echo "username = \"$MQTT_USERNAME\"\n" >> /usr/local/bin/config.toml
+fi
+
+# Write mqtt broker password if specified
+if [[ -n "$MQTT_PASSWORD" ]]; then
+  echo "password = \"$MQTT_PASSWORD\"\n" >> /usr/local/bin/config.toml
+fi
+
+# Write port if specified
 if [[ -n "$MQTT_PORT" ]]; then
   echo "port = $MQTT_PORT\n" >> /usr/local/bin/config.toml
 fi
