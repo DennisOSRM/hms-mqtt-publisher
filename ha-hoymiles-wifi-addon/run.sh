@@ -41,5 +41,16 @@ if [[ -z "$MQTT_PASSWORD" ]]; then
   exit 1
 fi
 
-# Execute the application with the configuration
-/usr/local/bin/hms-mqtt-publish "$INVERTER_HOST" "$MQTT_BROKER_HOST" "$MQTT_USERNAME" "$MQTT_PASSWORD" "$MQTT_PORT"
+# Write configuration to config.toml
+echo "inverter_host = \"$INVERTER_HOST\" \n\
+\n\
+[home_assistent] \n\
+host = \"$MQTT_BROKER_HOST\"\n\
+username = \"$MQTT_USERNAME\"\n\
+password = \"$MQTT_PASSWORD\"\n" > /usr/local/bin/config.toml
+if [[ -n "$MQTT_PORT" ]]; then
+  echo "port = $MQTT_PORT\n" >> /usr/local/bin/config.toml
+fi
+
+# Execute the application
+/usr/local/bin/hms-mqtt-publish

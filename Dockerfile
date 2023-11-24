@@ -34,5 +34,8 @@ FROM debian:bullseye-slim
 # Copy the installed application from the build image to the smaller image.
 COPY --from=builder /usr/local/cargo/bin/hms-mqtt-publish /usr/local/bin/hms-mqtt-publish
 
-# Run the application with given env variables
-CMD hms-mqtt-publish $INVERTER_HOST $MQTT_BROKER_HOST $MQTT_USERNAME $MQTT_PASSWORD $MQTT_PORT
+# Generate the config file from given environment variables
+RUN echo "inverter_host = \"$INVERTER_HOST\" \n\n[home_assistent] \nhost = \"$MQTT_BROKER_HOST\"\nusername = \"$MQTT_USERNAME\"\npassword = \"$MQTT_PASSWORD\"\nport = $MQTT_PORT\n" > config.toml
+
+# Run the application
+CMD hms-mqtt-publish
