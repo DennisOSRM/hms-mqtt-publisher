@@ -11,6 +11,7 @@ arch:                              # List of supported architectures.
   - amd64
 startup: application              # When the add-on should start.
 boot: auto                        # Boot options, auto or manual.
+services: ['mqtt:want']
 options:                          # Default options value for the add-on.
   inverter_host: ''
   mqtt_broker_host: ''
@@ -19,7 +20,7 @@ options:                          # Default options value for the add-on.
   mqtt_port: 1883
 schema:                            # Schema validation for the options.
   inverter_host: str
-  mqtt_broker_host: str
-  mqtt_username: str
-  mqtt_password: str
+  mqtt_broker_host: str?
+  mqtt_username: str?
+  mqtt_password: str?
   mqtt_port: int
