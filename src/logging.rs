@@ -4,7 +4,6 @@ use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
 
-
 pub(crate) fn init_logger() {
     Builder::new()
         .format(|buf, record| {
