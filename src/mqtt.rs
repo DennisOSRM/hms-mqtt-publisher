@@ -56,7 +56,7 @@ impl Mqtt {
         // configs let home assistant know what sensors are available and where to find them
         for sensor_config in sensor_configs {
             let config_topic = format!("{}/{}/config", config_topic, sensor_config.unique_id);
-            let config_payload = serde_json::to_value(&sensor_config).unwrap();
+            let config_payload = serde_json::to_value(sensor_config).unwrap();
             self.publish_json(&config_topic, config_payload);
         }
     }
@@ -86,7 +86,7 @@ impl MetricCollector for Mqtt {
 impl HMSStateResponse {
     fn get_model(&self) -> String {
         // TODO: figure out a way to properly identify the model
-        format!("HMS-WiFi")
+        "HMS-WiFi".to_string()
     }
 
     fn get_name(&self) -> String {

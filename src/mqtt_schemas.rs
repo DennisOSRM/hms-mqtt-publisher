@@ -71,13 +71,13 @@ impl SensorConfig {
     }
 
     pub fn string(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, &device_config, key, name, None, None)
+        Self::new_sensor(state_topic, device_config, key, name, None, None)
     }
 
     pub fn power(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
         Self::new_sensor(
             state_topic,
-            &device_config,
+            device_config,
             key,
             name,
             Some("power".to_string()),
@@ -99,7 +99,7 @@ impl SensorConfig {
     pub fn voltage(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
         Self::new_sensor(
             state_topic,
-            &device_config,
+            device_config,
             key,
             name,
             Some("voltage".to_string()),
@@ -110,7 +110,7 @@ impl SensorConfig {
     pub fn current(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
         Self::new_sensor(
             state_topic,
-            &device_config,
+            device_config,
             key,
             name,
             Some("current".to_string()),
@@ -126,7 +126,7 @@ impl SensorConfig {
     ) -> Self {
         Self::new_sensor(
             state_topic,
-            &device_config,
+            device_config,
             key,
             name,
             Some("temperature".to_string()),
@@ -142,7 +142,7 @@ impl SensorConfig {
     ) -> Self {
         Self::new_sensor(
             state_topic,
-            &device_config,
+            device_config,
             key,
             name,
             None,
@@ -158,7 +158,7 @@ impl SensorConfig {
     ) -> Self {
         Self::new_sensor(
             state_topic,
-            &device_config,
+            device_config,
             key,
             name,
             Some("frequency".to_string()),
