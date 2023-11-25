@@ -1,6 +1,6 @@
 inverter_host = "192.168.4.182"
 
-[home_assistent]
+[home_assistant]
 host = "192.168.178.250"
 username = "mqttuser"
 password = "MqttPass1"
