@@ -88,7 +88,7 @@ impl SensorConfig {
     pub fn energy(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
         Self::new_sensor(
             state_topic,
-            &device_config,
+            device_config,
             key,
             name,
             Some("energy".to_string()),
