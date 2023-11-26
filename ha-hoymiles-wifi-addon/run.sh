@@ -31,15 +31,32 @@ if [[ -z "$MQTT_BROKER_HOST" ]]; then
   exit 1
 fi
 
-if [[ -z "$MQTT_USERNAME" ]]; then
-  echo "The mqtt_username is not configured."
-  exit 1
+# Create the configuration file
+cat <<EOF > ./config.toml
+inverter_host = "$INVERTER_HOST"
+
+[home_assistent]
+host = "$MQTT_BROKER_HOST"
+username = "$MQTT_USERNAME"
+password = "$MQTT_PASSWORD"
+port = $MQTT_PORT
+EOF
+
+# Write mqtt broker username if specified
+if [[ -n "$MQTT_USERNAME" ]]; then
+  echo "username = \"$MQTT_USERNAME\"\n" >> ./config.toml
 fi
 
-if [[ -z "$MQTT_PASSWORD" ]]; then
-  echo "The mqtt_password is not configured."
-  exit 1
-fi
+# Create the configuration file
+cat <<EOF > ./config.toml
+inverter_host = "$INVERTER_HOST"
 
-# Execute the application with the configuration
-/usr/local/bin/hms-mqtt-publish "$INVERTER_HOST" "$MQTT_BROKER_HOST" "$MQTT_USERNAME" "$MQTT_PASSWORD" "$MQTT_PORT"
+[home_assistant]
+host = "$MQTT_BROKER_HOST"
+username = "$MQTT_USERNAME"
+password = "$MQTT_PASSWORD"
+port = $MQTT_PORT
+EOF
+
+# Execute the application
+/usr/local/bin/hms-mqtt-publish
