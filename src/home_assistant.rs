@@ -1,19 +1,19 @@
 use std::{thread, time::Duration};
 
-use crate::mqtt_schemas::DeviceConfig;
+use crate::home_assistant_config::DeviceConfig;
 use crate::{mqtt_config::MqttConfig, protos::hoymiles::RealData::HMSStateResponse};
 
+use crate::home_assistant_config::SensorConfig;
 use crate::metric_collector::MetricCollector;
-use crate::mqtt_schemas::SensorConfig;
 use log::{debug, error};
 use rumqttc::{Client, MqttOptions, QoS};
 use serde_json::json;
 
-pub struct Mqtt {
+pub struct HomeAssistant {
     client: Client,
 }
 
-impl Mqtt {
+impl HomeAssistant {
     pub fn new(config: &MqttConfig) -> Self {
         let this_host = hostname::get().unwrap().into_string().unwrap();
         let mut mqttoptions = MqttOptions::new(
@@ -68,7 +68,7 @@ impl Mqtt {
     }
 }
 
-impl MetricCollector for Mqtt {
+impl MetricCollector for HomeAssistant {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         let config_topic = format!("homeassistant/sensor/hms_{}", hms_state.short_dtu_sn());
         let state_topic = format!("solar/hms_{}/state", hms_state.short_dtu_sn());

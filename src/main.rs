@@ -1,19 +1,19 @@
 // TODO: support CA33 command to take over metrics consumption
 // TODO: support publishing to S-Miles cloud, too
 
+mod home_assistant;
+mod home_assistant_config;
 mod inverter;
 mod logging;
 mod metric_collector;
-mod mqtt;
 mod mqtt_config;
-mod mqtt_schemas;
 mod protos;
 mod simple_mqtt;
 
+use crate::home_assistant::HomeAssistant;
 use crate::inverter::Inverter;
 use crate::logging::init_logger;
 use crate::metric_collector::MetricCollector;
-use crate::mqtt::Mqtt;
 use crate::simple_mqtt::SimpleMqtt;
 
 use mqtt_config::MqttConfig;
@@ -52,7 +52,7 @@ fn main() {
     let mut output_channels: Vec<Box<dyn MetricCollector>> = Vec::new();
     if let Some(config) = config.home_assistant {
         info!("Publishing to Home Assistent");
-        output_channels.push(Box::new(Mqtt::new(&config)));
+        output_channels.push(Box::new(HomeAssistant::new(&config)));
     }
 
     if let Some(config) = config.simple_mqtt {
