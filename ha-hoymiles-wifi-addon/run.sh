@@ -31,15 +31,20 @@ if [[ -z "$MQTT_BROKER_HOST" ]]; then
   exit 1
 fi
 
-# The host names are mandatory information
-echo "inverter_host = \"$INVERTER_HOST\" \n\
-\n\
-[home_assistent] \n\
-host = \"$MQTT_BROKER_HOST\"\n"
+# Create the configuration file
+cat <<EOF > ./config.toml
+inverter_host = "$INVERTER_HOST"
+
+[home_assistent]
+host = "$MQTT_BROKER_HOST"
+username = "$MQTT_USERNAME"
+password = "$MQTT_PASSWORD"
+port = $MQTT_PORT
+EOF
 
 # Write mqtt broker username if specified
 if [[ -n "$MQTT_USERNAME" ]]; then
-  echo "username = \"$MQTT_USERNAME\"\n" >> /usr/local/bin/config.toml
+  echo "username = \"$MQTT_USERNAME\"\n" >> ./config.toml
 fi
 
 # Write mqtt broker password if specified

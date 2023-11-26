@@ -28,7 +28,7 @@ use protos::hoymiles::RealData;
 #[derive(Debug, Deserialize)]
 struct Config {
     inverter_host: String,
-    home_assistent: Option<MqttConfig>,
+    home_assistant: Option<MqttConfig>,
     simple_mqtt: Option<MqttConfig>,
 }
 
@@ -50,7 +50,7 @@ fn main() {
     let mut inverter = Inverter::new(&config.inverter_host);
 
     let mut output_channels: Vec<Box<dyn MetricCollector>> = Vec::new();
-    if let Some(config) = config.home_assistent {
+    if let Some(config) = config.home_assistant {
         info!("Publishing to Home Assistent");
         output_channels.push(Box::new(Mqtt::new(&config)));
     }
