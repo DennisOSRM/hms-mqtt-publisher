@@ -1,5 +1,4 @@
-use crate::protos::hoymiles::RealData::HMSStateResponse;
-use crate::RealData::RealDataResDTO;
+use crate::protos::hoymiles::RealData::{HMSStateResponse, RealDataResDTO};
 use crc16::*;
 use log::{debug, info};
 use protobuf::Message;
