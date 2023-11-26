@@ -6,3 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [v0.1]
 Initial release
+
+## [v0.2]
+Support auto discovery
