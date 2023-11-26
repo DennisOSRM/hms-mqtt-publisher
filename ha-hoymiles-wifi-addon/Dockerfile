@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 
 # Use pre-built image to copy the binary from
-FROM dennisosrm/hms-mqtt-publisher:v0.1 AS builder
+FROM dominikandreas/hms-mqtt-publisher-nightly:experimental-output_channels AS builder
 
 FROM $BUILD_FROM
 
