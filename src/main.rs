@@ -2,6 +2,7 @@
 // TODO: support publishing to S-Miles cloud, too
 
 mod logging;
+mod rumqttc_wrapper;
 
 use hms_mqtt_publish::home_assistant::HomeAssistant;
 use hms_mqtt_publish::inverter::Inverter;
@@ -9,6 +10,7 @@ use hms_mqtt_publish::metric_collector::MetricCollector;
 use hms_mqtt_publish::mqtt_config;
 use hms_mqtt_publish::simple_mqtt::SimpleMqtt;
 use mqtt_config::MqttConfig;
+use rumqttc_wrapper::RumqttcWrapper;
 use serde_derive::Deserialize;
 use std::fs;
 use std::thread;
@@ -48,7 +50,7 @@ fn main() {
 
     if let Some(config) = config.simple_mqtt {
         info!("Publishing to simple MQTT broker");
-        output_channels.push(Box::new(SimpleMqtt::new(&config)));
+        output_channels.push(Box::new(SimpleMqtt::<RumqttcWrapper>::new(&config)));
     }
 
     loop {
