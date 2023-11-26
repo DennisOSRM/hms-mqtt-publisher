@@ -1,21 +1,13 @@
 // TODO: support CA33 command to take over metrics consumption
 // TODO: support publishing to S-Miles cloud, too
 
-mod home_assistant;
-mod home_assistant_config;
-mod inverter;
 mod logging;
-mod metric_collector;
-mod mqtt_config;
-mod protos;
-mod simple_mqtt;
 
-use crate::home_assistant::HomeAssistant;
-use crate::inverter::Inverter;
-use crate::logging::init_logger;
-use crate::metric_collector::MetricCollector;
-use crate::simple_mqtt::SimpleMqtt;
-
+use hms_mqtt_publish::home_assistant::HomeAssistant;
+use hms_mqtt_publish::inverter::Inverter;
+use hms_mqtt_publish::metric_collector::MetricCollector;
+use hms_mqtt_publish::mqtt_config;
+use hms_mqtt_publish::simple_mqtt::SimpleMqtt;
 use mqtt_config::MqttConfig;
 use serde_derive::Deserialize;
 use std::fs;
@@ -23,7 +15,6 @@ use std::thread;
 use std::time::Duration;
 
 use log::{error, info};
-use protos::hoymiles::RealData;
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -35,7 +26,7 @@ struct Config {
 static REQUEST_DELAY: u64 = 30_500;
 
 fn main() {
-    init_logger();
+    logging::init_logger();
 
     if std::env::args().len() > 1 {
         error!("Arguments passed. Tool is configured by config.toml in its path");
