@@ -3,12 +3,12 @@
 This tool fetches the current telemetry information from the HMS-XXXXW-2T series of micro-inverters and publishes the information into an MQTT broker. Please note that it doesn’t implement a DTU, but pulls the information off the internal DTU of these inverters. 
 
 ## How to run
-The tool is distributed as source only — for now. You’ll have to download, compile and run it yourself. 
+The tool is distributed as source only — for now. You’ll have to download, compile and run it yourself. Please note that configuration of hosts, and passwords is done via `config.toml` from the current directory. It supports two different output channels. One is a simple MQTT publisher that doesn't follow a particular schema, and the other is made for [Home Assistant](https://www.home-assistant.io). It supports auto discovery of devices.
 
 ```
 $ git clone https://github.com/DennisOSRM/hms-mqtt-publisher.git
 $ cd hms-mqtt-publisher
-$ cargo r --release [inverter] [mqtt broker] [mqtt user] [mqtt password] [optional:mqtt port]
+$ cargo r
 ```
 ![image](https://github.com/lumapu/ahoy/assets/1067895/32c0b9b6-5aea-41e3-b9f8-161ce82fb99a)
 
