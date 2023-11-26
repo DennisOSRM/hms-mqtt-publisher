@@ -46,6 +46,8 @@ pub struct SensorConfig {
     unit_of_measurement: Option<String>, // The unit of measurement of the sensor.
     #[serde(skip_serializing_if = "Option::is_none")]
     device_class: Option<String>, // The type/class of the sensor, e.g. energy, power, temperature, etc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state_class: Option<String>, // The type/class of the state, e.g. measurement, total_increasing, etc.
 }
 
 impl SensorConfig {
@@ -56,6 +58,7 @@ impl SensorConfig {
         name: &str,
         device_class: Option<String>,
         unit_of_measurement: Option<String>,
+        state_class: Option<String>,
     ) -> Self {
         let value_template = format!("{{{{ value_json.{} }}}}", unique_id);
         let unique_id = format!("{}_{}", device_config.identifiers[0], unique_id);
@@ -67,11 +70,12 @@ impl SensorConfig {
             device_class,
             value_template,
             device: device_config.clone(),
+            state_class,
         }
     }
 
     pub fn string(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
-        Self::new_sensor(state_topic, device_config, key, name, None, None)
+        Self::new_sensor(state_topic, device_config, key, name, None, None, None)
     }
 
     pub fn power(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
@@ -82,6 +86,7 @@ impl SensorConfig {
             name,
             Some("power".to_string()),
             Some("W".to_string()),
+            Some("measurement".to_string()),
         )
     }
 
@@ -93,6 +98,7 @@ impl SensorConfig {
             name,
             Some("energy".to_string()),
             Some("Wh".to_string()),
+            Some("total_increasing".to_string()),
         )
     }
 
@@ -104,6 +110,7 @@ impl SensorConfig {
             name,
             Some("voltage".to_string()),
             Some("V".to_string()),
+            Some("measurement".to_string()),
         )
     }
 
@@ -115,6 +122,7 @@ impl SensorConfig {
             name,
             Some("current".to_string()),
             Some("A".to_string()),
+            Some("measurement".to_string()),
         )
     }
 
@@ -131,6 +139,7 @@ impl SensorConfig {
             name,
             Some("temperature".to_string()),
             Some("°C".to_string()),
+            Some("measurement".to_string()),
         )
     }
 
@@ -147,6 +156,7 @@ impl SensorConfig {
             name,
             None,
             Some("%".to_string()),
+            Some("measurement".to_string()),
         )
     }
 
@@ -163,6 +173,7 @@ impl SensorConfig {
             name,
             Some("frequency".to_string()),
             Some("Hz".to_string()),
+            Some("measurement".to_string()),
         )
     }
 }
