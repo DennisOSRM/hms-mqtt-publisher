@@ -73,7 +73,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             // keep polling the event loop to make sure outgoing messages get sent
             // the call to .iter() blocks and suspends the thread effectively by
             // calling .recv() under the hood. This implies that the loop terminates
-            // once the client unsubscribes.
+            // once the client unsubs
             for _ in connection.iter() {}
         });
         

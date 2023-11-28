@@ -6,7 +6,6 @@ use crate::{
 };
 
 use log::{debug, warn};
-// use rumqttc::{Client, MqttOptions, QoS};
 
 pub struct SimpleMqtt<MQTT: MqttWrapper> {
     client: MQTT,

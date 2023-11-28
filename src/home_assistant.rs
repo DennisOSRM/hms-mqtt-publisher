@@ -1,45 +1,19 @@
-use std::{thread, time::Duration};
-
 use crate::home_assistant_config::DeviceConfig;
+use crate::mqtt_wrapper::MqttWrapper;
 use crate::{mqtt_config::MqttConfig, protos::hoymiles::RealData::HMSStateResponse};
 
 use crate::home_assistant_config::SensorConfig;
 use crate::metric_collector::MetricCollector;
 use log::{debug, error};
-use rumqttc::{Client, MqttOptions, QoS};
 use serde_json::json;
 
-pub struct HomeAssistant {
-    client: Client,
+pub struct HomeAssistant<MQTT: MqttWrapper> {
+    client: MQTT,
 }
 
-impl HomeAssistant {
+impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
-        let this_host = hostname::get().unwrap().into_string().unwrap();
-        let mut mqttoptions = MqttOptions::new(
-            format!("hms-mqtt-publisher_{}", this_host),
-            &config.host,
-            config.port.unwrap_or(1883),
-        );
-        mqttoptions.set_keep_alive(Duration::from_secs(5));
-
-        //parse the mqtt authentication options
-        if let Some((username, password)) = match (&config.username, &config.password) {
-            (None, None) => None,
-            (None, Some(_)) => None,
-            (Some(username), None) => Some((username.clone(), "".into())),
-            (Some(username), Some(password)) => Some((username.clone(), password.clone())),
-        } {
-            mqttoptions.set_credentials(username, password);
-        }
-
-        let (client, mut connection) = Client::new(mqttoptions, 10);
-
-        thread::spawn(move || {
-            // keep polling the event loop to make sure outgoing messages get sent
-            for _ in connection.iter() {}
-        });
-
+        let client = MQTT::new(config);
         Self { client }
     }
 
@@ -47,8 +21,8 @@ impl HomeAssistant {
         debug!("Publishing to {topic} with payload {payload}");
 
         let payload = serde_json::to_string(&payload).unwrap();
-        if let Err(e) = self.client.publish(topic, QoS::AtMostOnce, true, payload) {
-            error!("Failed to publish message: {e}");
+        if let Err(e) = self.client.publish(topic, crate::mqtt_wrapper::QoS::AtMostOnce, true, payload) {
+            error!("Failed to publish message: {e:?}");
         }
     }
 
@@ -68,7 +42,7 @@ impl HomeAssistant {
     }
 }
 
-impl MetricCollector for HomeAssistant {
+impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         let config_topic = format!("homeassistant/sensor/hms_{}", hms_state.short_dtu_sn());
         let state_topic = format!("solar/hms_{}/state", hms_state.short_dtu_sn());
