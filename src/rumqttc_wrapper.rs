@@ -1,21 +1,13 @@
-use std::time::Duration;
+use std::{time::Duration, thread};
 
 use hms_mqtt_publish::{
     mqtt_config::MqttConfig,
     mqtt_wrapper::{self},
 };
-use rumqttc::{Client, Connection, MqttOptions};
+use rumqttc::{Client, MqttOptions};
 
 pub struct RumqttcWrapper {
     client: Client,
-    // TODO: check if connection is needed by EspMqtt implementation
-    //       if no, check if it can be removed from here
-    //       I.e. does this run without an ever-spinning thread to poll the event loop?
-    //       If the connection can't be dropped then implement the following
-    //       1. spawn background thread
-    //       2. add a channel to the background thread
-    //       3. implement Drop trait and shutdown bg thread
-    connection: Connection,
 }
 
 fn match_qos(qos: mqtt_wrapper::QoS) -> rumqttc::QoS {
@@ -75,7 +67,16 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             mqttoptions.set_credentials(username, password);
         }
 
-        let (client, connection) = Client::new(mqttoptions, 10);
-        Self { client, connection }
+        let (client, mut connection) = Client::new(mqttoptions, 10);
+        
+        thread::spawn(move || {
+            // keep polling the event loop to make sure outgoing messages get sent
+            // the call to .iter() blocks and suspends the thread effectively by
+            // calling .recv() under the hood. This implies that the loop terminates
+            // once the client unsubscribes.
+            for _ in connection.iter() {}
+        });
+        
+        Self { client }
     }
 }
