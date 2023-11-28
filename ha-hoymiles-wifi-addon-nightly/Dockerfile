@@ -21,7 +21,7 @@ RUN mkdir src && \
     cargo build --release
 
 
-# Stage 2: Build the protobuf files
+# Stage 2: Build the application
 
 COPY ./build.rs ./
 COPY ./src ./src
