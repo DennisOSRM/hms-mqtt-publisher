@@ -21,7 +21,10 @@ impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
         debug!("Publishing to {topic} with payload {payload}");
 
         let payload = serde_json::to_string(&payload).unwrap();
-        if let Err(e) = self.client.publish(topic, crate::mqtt_wrapper::QoS::AtMostOnce, true, payload) {
+        if let Err(e) =
+            self.client
+                .publish(topic, crate::mqtt_wrapper::QoS::AtMostOnce, true, payload)
+        {
             error!("Failed to publish message: {e:?}");
         }
     }
