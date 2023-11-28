@@ -18,9 +18,11 @@ options:                          # Default options value for the add-on.
   mqtt_username: ''
   mqtt_password: ''
   mqtt_port: 1883
+  debug_logging: false
 schema:                            # Schema validation for the options.
   inverter_host: str
   mqtt_broker_host: str?
   mqtt_username: str?
   mqtt_password: str?
   mqtt_port: int
+  debug_logging: bool
