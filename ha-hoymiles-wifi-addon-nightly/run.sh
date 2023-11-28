@@ -13,11 +13,13 @@ MQTT_BROKER_HOST=$(bashio::config 'mqtt_broker_host')
 MQTT_USERNAME=$(bashio::config 'mqtt_username')
 MQTT_PASSWORD=$(bashio::config 'mqtt_password')
 MQTT_PORT=$(bashio::config 'mqtt_port')
+DEBUG_LOGGING=$(bashio::config 'debug_logging')
 
 # Use bashio::config values if they are defined, otherwise fall back to bashio::services values
 MQTT_BROKER_HOST=${MQTT_BROKER_HOST:-$HA_MQTT_BROKER_HOST}
 MQTT_USERNAME=${MQTT_USERNAME:-$HA_MQTT_USERNAME}
 MQTT_PASSWORD=${MQTT_PASSWORD:-$HA_MQTT_PASSWORD}
+DEBUG_LOGGING=${MQTT_PASSWORD:-'false'}
 
 
 # Check if the required configs are provided
@@ -34,22 +36,7 @@ fi
 # Create the configuration file
 cat <<EOF > ./config.toml
 inverter_host = "$INVERTER_HOST"
-
-[home_assistent]
-host = "$MQTT_BROKER_HOST"
-username = "$MQTT_USERNAME"
-password = "$MQTT_PASSWORD"
-port = $MQTT_PORT
-EOF
-
-# Write mqtt broker username if specified
-if [[ -n "$MQTT_USERNAME" ]]; then
-  echo "username = \"$MQTT_USERNAME\"\n" >> ./config.toml
-fi
-
-# Create the configuration file
-cat <<EOF > ./config.toml
-inverter_host = "$INVERTER_HOST"
+debug_logging = "$DEBUG_LOGGING"
 
 [home_assistant]
 host = "$MQTT_BROKER_HOST"
