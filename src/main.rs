@@ -21,13 +21,12 @@ struct Config {
     inverter_host: String,
     home_assistant: Option<MqttConfig>,
     simple_mqtt: Option<MqttConfig>,
+    debug_logging: Option<bool>,
 }
 
 static REQUEST_DELAY: u64 = 30_500;
 
 fn main() {
-    logging::init_logger();
-
     if std::env::args().len() > 1 {
         error!("Arguments passed. Tool is configured by config.toml in its path");
     }
@@ -36,6 +35,7 @@ fn main() {
     let contents = fs::read_to_string(filename).expect("Could not read config.toml");
     let config: Config = toml::from_str(&contents).expect("toml config unparsable");
 
+    logging::init_logger(config.debug_logging.unwrap_or(false));
     info!("inverter host: {}", config.inverter_host);
 
     let mut inverter = Inverter::new(&config.inverter_host);
