@@ -36,7 +36,7 @@ fi
 # Create the configuration file
 cat <<EOF > ./config.toml
 inverter_host = "$INVERTER_HOST"
-debug_logging = "$DEBUG_LOGGING"
+debug_logging = $DEBUG_LOGGING
 
 [home_assistant]
 host = "$MQTT_BROKER_HOST"
