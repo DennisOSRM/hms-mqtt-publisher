@@ -1,4 +1,4 @@
-inverter_host = "192.168.1.225"
+inverter_host = "192.168.4.182"
 debug_logging = false
 
 [home_assistant]
