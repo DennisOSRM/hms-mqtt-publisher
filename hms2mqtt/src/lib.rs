@@ -1,5 +1,5 @@
-pub mod home_assistant;
 pub mod home_assistant_config;
+pub mod home_assistant;
 pub mod inverter;
 pub mod metric_collector;
 pub mod mqtt_config;

@@ -1,11 +1,10 @@
-use anyhow::Ok;
-use hms_mqtt_publish::{
+use std::{thread, time::Duration};
+
+use hms2mqtt::{
     mqtt_config::MqttConfig,
     mqtt_wrapper::{self},
 };
 use rumqttc::{Client, MqttOptions};
-use std::thread;
-use std::time::Duration;
 
 pub struct RumqttcWrapper {
     client: Client,

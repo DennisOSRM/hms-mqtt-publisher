@@ -4,11 +4,11 @@
 mod logging;
 mod rumqttc_wrapper;
 
-use hms_mqtt_publish::home_assistant::HomeAssistant;
-use hms_mqtt_publish::inverter::Inverter;
-use hms_mqtt_publish::metric_collector::MetricCollector;
-use hms_mqtt_publish::mqtt_config;
-use hms_mqtt_publish::simple_mqtt::SimpleMqtt;
+use hms2mqtt::home_assistant::HomeAssistant;
+use hms2mqtt::inverter::Inverter;
+use hms2mqtt::metric_collector::MetricCollector;
+use hms2mqtt::mqtt_config;
+use hms2mqtt::simple_mqtt::SimpleMqtt;
 use mqtt_config::MqttConfig;
 use rumqttc_wrapper::RumqttcWrapper;
 use serde_derive::Deserialize;
