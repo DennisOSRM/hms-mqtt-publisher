@@ -1,5 +1,5 @@
 use crate::protos::hoymiles::RealData::{HMSStateResponse, RealDataResDTO};
-use crc16::*;
+use crc16::{MODBUS, State};
 use log::{debug, info};
 use protobuf::Message;
 use std::io::{Read, Write};
