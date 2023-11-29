@@ -6,9 +6,6 @@ pub enum QoS {
     ExactlyOnce,
 }
 
-#[derive(Debug)]
-pub struct ClientError; // dummy error message
-
 // TODO: add an implementation of the MqttWrapper for testing
 // TODO: should this be renamed to MqttImplementation?
 pub trait MqttWrapper {
@@ -17,15 +14,9 @@ pub trait MqttWrapper {
     // wrap the MQTT implementation, i.e. the client, in a new type that in
     // turn implements this trait.
 
-    fn subscribe(&mut self, topic: &str, qos: QoS) -> Result<(), ClientError>;
+    fn subscribe(&mut self, topic: &str, qos: QoS) -> anyhow::Result<()>;
 
-    fn publish<S, V>(
-        &mut self,
-        topic: S,
-        qos: QoS,
-        retain: bool,
-        payload: V,
-    ) -> Result<(), ClientError>
+    fn publish<S, V>(&mut self, topic: S, qos: QoS, retain: bool, payload: V) -> anyhow::Result<()>
     where
         S: Into<String>,
         V: Into<Vec<u8>>;

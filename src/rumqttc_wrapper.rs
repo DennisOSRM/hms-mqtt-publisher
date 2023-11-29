@@ -19,16 +19,8 @@ fn match_qos(qos: mqtt_wrapper::QoS) -> rumqttc::QoS {
 }
 
 impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
-    fn subscribe(
-        &mut self,
-        topic: &str,
-        qos: mqtt_wrapper::QoS,
-    ) -> Result<(), mqtt_wrapper::ClientError> {
-        if let Ok(result) = self.client.subscribe(topic, match_qos(qos)) {
-            return Ok(result);
-        }
-        // TODO: log or convert the error
-        Err(mqtt_wrapper::ClientError)
+    fn subscribe(&mut self, topic: &str, qos: mqtt_wrapper::QoS) -> anyhow::Result<()> {
+        Ok(self.client.subscribe(topic, match_qos(qos))?)
     }
 
     fn publish<S, V>(
@@ -37,16 +29,14 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         qos: mqtt_wrapper::QoS,
         retain: bool,
         payload: V,
-    ) -> Result<(), mqtt_wrapper::ClientError>
+    ) -> anyhow::Result<()>
     where
         S: Into<String>,
         V: Into<Vec<u8>>,
     {
-        if let Ok(result) = self.client.publish(topic, match_qos(qos), retain, payload) {
-            return Ok(result);
-        }
-        // TODO: log or convert the error
-        Err(mqtt_wrapper::ClientError)
+        Ok(self
+            .client
+            .try_publish(topic, match_qos(qos), retain, payload)?)
     }
 
     fn new(config: &MqttConfig) -> Self {
