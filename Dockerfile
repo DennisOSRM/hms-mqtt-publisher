@@ -14,6 +14,8 @@ WORKDIR /usr/src/hms-mqtt-publish
 # Stage 1: Build the dependencies
 
 COPY ./Cargo.toml ./
+# Remove the hms2mqtt dependency from the Cargo.toml file (compiled in second stage)
+RUN sed -i s/hms2mqtt.*//g Cargo.toml 
 RUN mkdir src && \
     echo "fn main() {println!(\"hello from dependency build\")}" > src/main.rs && \
     cargo build --release
@@ -21,7 +23,7 @@ RUN mkdir src && \
 
 # Stage 2: Build the application
 
-COPY ./build.rs ./
+COPY ./hms2mqtt ./hms2mqtt
 COPY ./src ./src
 RUN cargo install --path .
 
