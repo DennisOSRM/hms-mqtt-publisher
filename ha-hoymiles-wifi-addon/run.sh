@@ -44,7 +44,7 @@ password = "$MQTT_PASSWORD"
 port = $MQTT_PORT
 EOF
 
-// if DEBUG_LOGGING is true, set the RUST_LOG=debug environment variable to enable debug logging
+# if DEBUG_LOGGING is true, set the RUST_LOG=debug environment variable to enable debug logging
 if [[ "$DEBUG_LOGGING" == "true" ]]; then
   export RUST_LOG=debug
 fi
