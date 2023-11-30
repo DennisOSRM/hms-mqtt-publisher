@@ -4,13 +4,7 @@ use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
 
-pub fn init_logger(debug: bool) {
-    let level = if debug {
-        LevelFilter::Debug
-    } else {
-        LevelFilter::Info
-    };
-
+pub fn init_logger() {
     Builder::new()
         .format(|buf, record| {
             writeln!(
@@ -21,6 +15,6 @@ pub fn init_logger(debug: bool) {
                 record.args()
             )
         })
-        .filter(None, level)
+        .filter(None, LevelFilter::Info)
         .init();
 }
