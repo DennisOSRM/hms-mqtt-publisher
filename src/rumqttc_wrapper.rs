@@ -4,7 +4,8 @@ use hms_mqtt_publish::{
     mqtt_wrapper::{self},
 };
 use rumqttc::{Client, MqttOptions};
-use std::{thread, time::Duration};
+use std::thread;
+use std::time::Duration;
 
 pub struct RumqttcWrapper {
     client: Client,
@@ -41,12 +42,14 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         {
             return Ok(());
         }
+        std::thread::sleep(Duration::from_millis(100));
         if let std::result::Result::Ok(_) =
             self.client
                 .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
         {
             return Ok(());
         }
+        std::thread::sleep(Duration::from_millis(100));
         Ok(self
             .client
             .try_publish(topic, match_qos(qos), retain, payload)?)
