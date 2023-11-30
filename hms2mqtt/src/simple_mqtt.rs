@@ -5,7 +5,10 @@ use crate::{
     protos::hoymiles::RealData::HMSStateResponse,
 };
 
+use chrono::prelude::DateTime;
+use chrono::Local;
 use log::{debug, warn};
+use std::time::{Duration, UNIX_EPOCH};
 
 pub struct SimpleMqtt<MQTT: MqttWrapper> {
     client: MQTT,
@@ -21,6 +24,10 @@ impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
 impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         debug!("{hms_state}");
+
+        let d = UNIX_EPOCH + Duration::from_secs(hms_state.time as u64);
+        let datetime = DateTime::<Local>::from(d);
+        let inverter_local_time = datetime.format("%Y-%m-%d %H:%M:%S.%f").to_string();
 
         let pv_current_power = hms_state.pv_current_power as f32 / 10.;
         let pv_daily_yield = hms_state.pv_daily_yield;
@@ -40,6 +47,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
 
         // TODO: this section bears a lot of repetition. Investigate if there's a more idiomatic way to get the same result, perhaps using a macro
         let topic_payload_pairs = [
+            ("hms800wt2/inverter_local_time", inverter_local_time),
             ("hms800wt2/pv_current_power", pv_current_power.to_string()),
             ("hms800wt2/pv_daily_yield", pv_daily_yield.to_string()),
             ("hms800wt2/pv_current_power", pv_current_power.to_string()),
