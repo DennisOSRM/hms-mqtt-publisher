@@ -22,8 +22,6 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         debug!("{hms_state}");
 
-        self.client.subscribe("hms800wt2", QoS::AtMostOnce).unwrap();
-
         let pv_current_power = hms_state.pv_current_power as f32 / 10.;
         let pv_daily_yield = hms_state.pv_daily_yield;
         let pv_grid_voltage = hms_state.inverter_state[0].grid_voltage as f32 / 10.;

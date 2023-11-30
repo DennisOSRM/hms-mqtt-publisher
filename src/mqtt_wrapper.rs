@@ -1,5 +1,6 @@
 use crate::mqtt_config::MqttConfig;
 
+#[derive(Clone, Copy)]
 pub enum QoS {
     AtMostOnce,
     AtLeastOnce,
@@ -18,8 +19,8 @@ pub trait MqttWrapper {
 
     fn publish<S, V>(&mut self, topic: S, qos: QoS, retain: bool, payload: V) -> anyhow::Result<()>
     where
-        S: Into<String>,
-        V: Into<Vec<u8>>;
+        S: Clone + Into<String>,
+        V: Clone + Into<Vec<u8>>;
 
     fn new(config: &MqttConfig) -> Self;
 }

@@ -1,10 +1,10 @@
-use std::{thread, time::Duration};
-
+use anyhow::Ok;
 use hms_mqtt_publish::{
     mqtt_config::MqttConfig,
     mqtt_wrapper::{self},
 };
 use rumqttc::{Client, MqttOptions};
+use std::{thread, time::Duration};
 
 pub struct RumqttcWrapper {
     client: Client,
@@ -31,9 +31,22 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         payload: V,
     ) -> anyhow::Result<()>
     where
-        S: Into<String>,
-        V: Into<Vec<u8>>,
+        S: Clone + Into<String>,
+        V: Clone + Into<Vec<u8>>,
     {
+        // try publishing up to three times
+        if let std::result::Result::Ok(_) =
+            self.client
+                .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
+        {
+            return Ok(());
+        }
+        if let std::result::Result::Ok(_) =
+            self.client
+                .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
+        {
+            return Ok(());
+        }
         Ok(self
             .client
             .try_publish(topic, match_qos(qos), retain, payload)?)
