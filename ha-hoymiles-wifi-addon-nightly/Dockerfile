@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 
 # Use pre-built image to copy the binary from
-FROM dominikandreas/hms-mqtt-publisher-nightly:nightly-feature-ha_addon_nightly-20231128 AS builder
+FROM dominikandreas/hms-mqtt-publisher-nightly:nightly-main-20231130 AS builder
 
 FROM $BUILD_FROM
 
