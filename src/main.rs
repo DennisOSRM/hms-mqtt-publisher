@@ -2,13 +2,15 @@
 // TODO: support publishing to S-Miles cloud, too
 
 mod logging;
+mod rumqttc_wrapper;
 
-use hms_mqtt_publish::home_assistant::HomeAssistant;
-use hms_mqtt_publish::inverter::Inverter;
-use hms_mqtt_publish::metric_collector::MetricCollector;
-use hms_mqtt_publish::mqtt_config;
-use hms_mqtt_publish::simple_mqtt::SimpleMqtt;
+use hms2mqtt::home_assistant::HomeAssistant;
+use hms2mqtt::inverter::Inverter;
+use hms2mqtt::metric_collector::MetricCollector;
+use hms2mqtt::mqtt_config;
+use hms2mqtt::simple_mqtt::SimpleMqtt;
 use mqtt_config::MqttConfig;
+use rumqttc_wrapper::RumqttcWrapper;
 use serde_derive::Deserialize;
 use std::fs;
 use std::thread;
@@ -43,12 +45,12 @@ fn main() {
     let mut output_channels: Vec<Box<dyn MetricCollector>> = Vec::new();
     if let Some(config) = config.home_assistant {
         info!("Publishing to Home Assistent");
-        output_channels.push(Box::new(HomeAssistant::new(&config)));
+        output_channels.push(Box::new(HomeAssistant::<RumqttcWrapper>::new(&config)));
     }
 
     if let Some(config) = config.simple_mqtt {
         info!("Publishing to simple MQTT broker");
-        output_channels.push(Box::new(SimpleMqtt::new(&config)));
+        output_channels.push(Box::new(SimpleMqtt::<RumqttcWrapper>::new(&config)));
     }
 
     loop {
