@@ -19,7 +19,7 @@ DEBUG_LOGGING=$(bashio::config 'debug_logging')
 MQTT_BROKER_HOST=${MQTT_BROKER_HOST:-$HA_MQTT_BROKER_HOST}
 MQTT_USERNAME=${MQTT_USERNAME:-$HA_MQTT_USERNAME}
 MQTT_PASSWORD=${MQTT_PASSWORD:-$HA_MQTT_PASSWORD}
-DEBUG_LOGGING=${MQTT_PASSWORD:-'false'}
+DEBUG_LOGGING=${DEBUG_LOGGING:-'false'}
 
 
 # Check if the required configs are provided
@@ -36,7 +36,6 @@ fi
 # Create the configuration file
 cat <<EOF > ./config.toml
 inverter_host = "$INVERTER_HOST"
-debug_logging = $DEBUG_LOGGING
 
 [home_assistant]
 host = "$MQTT_BROKER_HOST"
@@ -44,6 +43,11 @@ username = "$MQTT_USERNAME"
 password = "$MQTT_PASSWORD"
 port = $MQTT_PORT
 EOF
+
+// if DEBUG_LOGGING is true, set the RUST_LOG=debug environment variable to enable debug logging
+if [[ "$DEBUG_LOGGING" == "true" ]]; then
+  export RUST_LOG=debug
+fi
 
 # Execute the application
 /usr/local/bin/hms-mqtt-publish
