@@ -22,7 +22,7 @@ RUN mkdir src && \
 
 
 # Stage 2: Build the application
-
+COPY ./Cargo.toml ./
 COPY ./hms2mqtt ./hms2mqtt
 COPY ./src ./src
 RUN cargo install --path .
