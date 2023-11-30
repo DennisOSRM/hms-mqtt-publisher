@@ -15,7 +15,7 @@ pub struct SimpleMqtt {
 impl SimpleMqtt {
     pub fn new(config: &MqttConfig) -> Self {
         let mut mqttoptions = MqttOptions::new(
-            "hms800wt2-mqtt-publisher",
+            "hms800w2t-mqtt-publisher",
             &config.host,
             config.port.unwrap_or(1883),
         );
@@ -46,7 +46,7 @@ impl MetricCollector for SimpleMqtt {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         debug!("{hms_state}");
 
-        self.client.subscribe("hms800wt2", QoS::AtMostOnce).unwrap();
+        // self.client.subscribe("hms800wt2", QoS::AtMostOnce).unwrap();
 
         let pv_current_power = hms_state.pv_current_power as f32 / 10.;
         let pv_daily_yield = hms_state.pv_daily_yield;
