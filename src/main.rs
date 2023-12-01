@@ -29,7 +29,7 @@ static REQUEST_DELAY: u64 = 30_500;
 
 fn main() {
     logging::init_logger();
-
+    info!("Running revision: {}", env!("GIT_HASH"));
     if std::env::args().len() > 1 {
         error!("Arguments passed. Tool is configured by config.toml in its path");
     }
