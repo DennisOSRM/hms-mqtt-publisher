@@ -1,12 +1,12 @@
 inverter_host = "192.168.4.182"
 
 [home_assistant]
-host = "192.168.178.250"
+host = "192.168.179.250"
 username = "mqttuser"
 password = "MqttPass1"
 port = 1883
 
 [simple_mqtt]
-host = "192.168.178.250"
+host = "192.168.179.250"
 username = "mqttuser"
 password = "MqttPass1"

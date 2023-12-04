@@ -74,7 +74,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             mqttoptions.set_credentials(username, password);
         }
 
-        let (client, mut connection) = Client::new(mqttoptions, 10);
+        let (client, mut connection) = Client::new(mqttoptions, 512);
 
         thread::spawn(move || {
             // keep polling the event loop to make sure outgoing messages get sent
