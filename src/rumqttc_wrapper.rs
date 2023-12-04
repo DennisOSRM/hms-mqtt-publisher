@@ -4,7 +4,8 @@ use hms2mqtt::{
     mqtt_config::MqttConfig,
     mqtt_wrapper::{self},
 };
-use rumqttc::{Client, MqttOptions};
+use log::warn;
+use rumqttc::{Client, MqttOptions, QoS::ExactlyOnce};
 
 pub struct RumqttcWrapper {
     client: Client,
@@ -74,7 +75,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             mqttoptions.set_credentials(username, password);
         }
 
-        let (client, mut connection) = Client::new(mqttoptions, 512);
+        let (mut client, mut connection) = Client::new(mqttoptions, 512);
 
         thread::spawn(move || {
             // keep polling the event loop to make sure outgoing messages get sent
@@ -83,7 +84,9 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             // once the client unsubs
             for _ in connection.iter() {}
         });
-
+        if let Err(e) = client.subscribe("hms800wt2", ExactlyOnce) {
+            warn!("subscription to base topic failed: {e}");
+        }
         Self { client }
     }
 }
