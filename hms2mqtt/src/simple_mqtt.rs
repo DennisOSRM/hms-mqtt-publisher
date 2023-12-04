@@ -79,7 +79,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
         topic_payload_pairs
             .into_iter()
             .for_each(|(topic, payload)| {
-                if let Err(e) = self.client.publish(topic, QoS::AtMostOnce, true, payload) {
+                if let Err(e) = self.client.publish(topic, QoS::ExactlyOnce, true, payload) {
                     warn!("mqtt error: {e:?}")
                 }
             });
