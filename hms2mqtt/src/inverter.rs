@@ -68,7 +68,7 @@ impl<'a> Inverter<'a> {
                 return None;
             }
         };
-        if let None = address {
+        if address.is_none() {
             error!("Unable to parse name");
             return None;
         }
