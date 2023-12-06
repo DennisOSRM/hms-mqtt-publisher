@@ -13,7 +13,7 @@ pub struct HomeAssistant<MQTT: MqttWrapper> {
 
 impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
-        let client = MQTT::new(config);
+        let client = MQTT::new(config, "-ha");
         Self { client }
     }
 
@@ -23,7 +23,7 @@ impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
         let payload = serde_json::to_string(&payload).unwrap();
         if let Err(e) =
             self.client
-                .publish(topic, crate::mqtt_wrapper::QoS::ExactlyOnce, true, payload)
+                .publish(topic, crate::mqtt_wrapper::QoS::AtMostOnce, true, payload)
         {
             error!("Failed to publish message: {e:?}");
         }

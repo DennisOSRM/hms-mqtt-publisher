@@ -5,7 +5,7 @@ use hms2mqtt::{
     mqtt_wrapper::{self},
 };
 use log::warn;
-use rumqttc::{Client, MqttOptions, QoS::ExactlyOnce};
+use rumqttc::{Client, MqttOptions, QoS::AtMostOnce};
 
 pub struct RumqttcWrapper {
     client: Client,
@@ -57,9 +57,9 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             .try_publish(topic, match_qos(qos), retain, payload)?)
     }
 
-    fn new(config: &MqttConfig) -> Self {
+    fn new(config: &MqttConfig, suffix: &str) -> Self {
         let mut mqttoptions = MqttOptions::new(
-            "hms800wt2-mqtt-publisher",
+            "hms800wt2-mqtt-publisher".to_string() + suffix,
             &config.host,
             config.port.unwrap_or(1883),
         );
@@ -84,7 +84,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             // once the client unsubs
             for _ in connection.iter() {}
         });
-        if let Err(e) = client.subscribe("hms800wt2", ExactlyOnce) {
+        if let Err(e) = client.subscribe("hms800wt2", AtMostOnce) {
             warn!("subscription to base topic failed: {e}");
         }
         Self { client }

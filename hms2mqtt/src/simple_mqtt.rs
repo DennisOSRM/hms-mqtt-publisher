@@ -16,7 +16,7 @@ pub struct SimpleMqtt<MQTT: MqttWrapper> {
 
 impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
-        let client = MQTT::new(config);
+        let client = MQTT::new(config, "-sm");
         Self { client }
     }
 }
@@ -79,7 +79,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
         topic_payload_pairs
             .into_iter()
             .for_each(|(topic, payload)| {
-                if let Err(e) = self.client.publish(topic, QoS::ExactlyOnce, true, payload) {
+                if let Err(e) = self.client.publish(topic, QoS::AtMostOnce, true, payload) {
                     warn!("mqtt error: {e:?}")
                 }
             });

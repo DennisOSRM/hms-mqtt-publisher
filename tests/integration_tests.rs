@@ -35,7 +35,7 @@ impl MqttWrapper for MqttTester {
         Ok(())
     }
 
-    fn new(_config: &hms2mqtt::mqtt_config::MqttConfig) -> Self {
+    fn new(_config: &hms2mqtt::mqtt_config::MqttConfig, _suffix: &str) -> Self {
         Self {
             published_values: Vec::new(),
         }
@@ -44,12 +44,15 @@ impl MqttWrapper for MqttTester {
 
 #[test]
 fn publish_one_message() {
-    let mut mqtt = MqttTester::new(&MqttConfig {
-        host: "frob".to_owned(),
-        port: Some(1234),
-        username: None,
-        password: None,
-    });
+    let mut mqtt = MqttTester::new(
+        &MqttConfig {
+            host: "frob".to_owned(),
+            port: Some(1234),
+            username: None,
+            password: None,
+        },
+        "-test",
+    );
     let result = mqtt.publish(
         "foo",
         hms2mqtt::mqtt_wrapper::QoS::AtMostOnce,
