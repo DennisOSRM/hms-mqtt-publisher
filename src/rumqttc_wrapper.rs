@@ -5,7 +5,7 @@ use hms2mqtt::{
     mqtt_wrapper::{self},
 };
 use log::warn;
-use rumqttc::{Client, MqttOptions, QoS::ExactlyOnce};
+use rumqttc::{Client, MqttOptions, QoS::AtMostOnce};
 
 pub struct RumqttcWrapper {
     client: Client,
@@ -84,7 +84,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             // once the client unsubs
             for _ in connection.iter() {}
         });
-        if let Err(e) = client.subscribe("hms800wt2", ExactlyOnce) {
+        if let Err(e) = client.subscribe("hms800wt2", AtMostOnce) {
             warn!("subscription to base topic failed: {e}");
         }
         Self { client }
