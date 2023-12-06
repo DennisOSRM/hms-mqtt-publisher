@@ -57,9 +57,9 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             .try_publish(topic, match_qos(qos), retain, payload)?)
     }
 
-    fn new(config: &MqttConfig) -> Self {
+    fn new(config: &MqttConfig, suffix: &str) -> Self {
         let mut mqttoptions = MqttOptions::new(
-            "hms800wt2-mqtt-publisher",
+            "hms800wt2-mqtt-publisher".to_string() + suffix,
             &config.host,
             config.port.unwrap_or(1883),
         );
