@@ -1,6 +1,6 @@
 use crate::protos::hoymiles::RealData::{HMSStateResponse, RealDataResDTO};
 use crc16::{State, MODBUS};
-use log::{debug, info};
+use log::{debug, info, warn};
 use protobuf::Message;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -71,6 +71,12 @@ impl<'a> Inverter<'a> {
         }
 
         let mut stream = stream.unwrap();
+        if let Err(e) = stream.set_write_timeout(Some(Duration::new(5, 0))) {
+            warn!("could not set write timeout: {e}");
+        }
+        if let Err(e) = stream.set_read_timeout(Some(Duration::new(5, 0))) {
+            warn!("could not set read timeout: {e}");
+        }
         if let Err(e) = stream.write(&message) {
             debug!(r#"{e}"#);
             self.set_state(NetworkState::Offline);
