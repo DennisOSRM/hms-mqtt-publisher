@@ -75,7 +75,7 @@ impl<'a> Inverter<'a> {
 
         let stream = TcpStream::connect_timeout(&address.unwrap(), Duration::from_millis(500));
         if let Err(e) = stream {
-            error!("could not connect: {e}");
+            debug!("could not connect: {e}");
             self.set_state(NetworkState::Offline);
             return None;
         }
