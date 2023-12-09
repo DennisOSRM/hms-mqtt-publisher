@@ -34,8 +34,6 @@ fn main() {
         return;
     }
 
-    println!("{config:#?}");
-
     info!("inverter host: {}", config.inverter_host);
 
     let mut inverter = Inverter::new(&config.inverter_host);
