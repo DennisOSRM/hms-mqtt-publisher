@@ -16,7 +16,7 @@ pub struct SimpleMqtt<MQTT: MqttWrapper> {
 
 impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
-        let client = MQTT::new(config);
+        let client = MQTT::new(config, "-sm");
         Self { client }
     }
 }

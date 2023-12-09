@@ -13,7 +13,7 @@ pub struct HomeAssistant<MQTT: MqttWrapper> {
 
 impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
-        let client = MQTT::new(config);
+        let client = MQTT::new(config, "-ha");
         Self { client }
     }
 

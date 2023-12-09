@@ -22,5 +22,5 @@ pub trait MqttWrapper {
         S: Clone + Into<String>,
         V: Clone + Into<Vec<u8>>;
 
-    fn new(config: &MqttConfig) -> Self;
+    fn new(config: &MqttConfig, suffix: &str) -> Self;
 }
