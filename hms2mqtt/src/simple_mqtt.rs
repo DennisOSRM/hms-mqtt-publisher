@@ -37,12 +37,12 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
         let pv_port1_voltage = hms_state.port_state[0].pv_vol as f32 / 10.;
         let pv_port1_curr = hms_state.port_state[0].pv_cur as f32 / 100.;
         let pv_port1_power = hms_state.port_state[0].pv_power as f32 / 10.;
-        let pv_port1_energy = hms_state.port_state[0].pv_energy_total as f32 / 10.;
+        let pv_port1_energy = hms_state.port_state[0].pv_energy_total as f32;
         let pv_port1_daily_yield = hms_state.port_state[0].pv_daily_yield as f32 / 10.;
         let pv_port2_voltage = hms_state.port_state[1].pv_vol as f32 / 10.;
         let pv_port2_curr = hms_state.port_state[1].pv_cur as f32 / 100.;
         let pv_port2_power = hms_state.port_state[1].pv_power as f32 / 10.;
-        let pv_port2_energy = hms_state.port_state[1].pv_energy_total as f32 / 10.;
+        let pv_port2_energy = hms_state.port_state[1].pv_energy_total as f32;
         let pv_port2_daily_yield = hms_state.port_state[1].pv_daily_yield as f32 / 10.;
 
         // TODO: this section bears a lot of repetition. Investigate if there's a more idiomatic way to get the same result, perhaps using a macro
