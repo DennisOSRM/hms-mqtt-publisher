@@ -20,6 +20,10 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_HUB_USER }}
           password: ${{ secrets.DOCKER_HUB_PASS }}
+      
+      - name: Get the current Git commit hash
+        id: git_hash
+        run: echo "GIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
@@ -38,3 +42,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: GIT_HASH=${{ env.GIT_HASH }}

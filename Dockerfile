@@ -1,6 +1,9 @@
 # First, we need an image to build the application
 FROM rust:slim-bullseye as builder
 
+ARG GIT_HASH
+ENV GIT_HASH=$GIT_HASH
+
 WORKDIR /usr/src/hms-mqtt-publish
 
 # The following builds the rust application in two stages:
