@@ -1,13 +1,12 @@
 use crate::protos::hoymiles::RealData::{HMSStateResponse, RealDataResDTO};
 use crc16::{State, MODBUS};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use protobuf::Message;
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
-static INVERTER_PORT: u16 = 10081;
+static INVERTER_PORT: &str = "10081";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NetworkState {
@@ -61,11 +60,22 @@ impl<'a> Inverter<'a> {
         message.extend_from_slice(&len.to_be_bytes());
         message.extend_from_slice(&request_as_bytes);
 
-        let ip = self.host.parse().expect("Unable to parse socket address");
-        let address = SocketAddr::new(IpAddr::V4(ip), INVERTER_PORT);
-        let stream = TcpStream::connect_timeout(&address, Duration::from_millis(500));
+        let inverter_host = self.host.to_string() + ":" + INVERTER_PORT;
+        let address = match inverter_host.to_socket_addrs() {
+            Ok(mut a) => a.next(),
+            Err(e) => {
+                error!("Unable to resolve domain: {e}");
+                return None;
+            }
+        };
+        if address.is_none() {
+            error!("Unable to parse name");
+            return None;
+        }
+
+        let stream = TcpStream::connect_timeout(&address.unwrap(), Duration::from_millis(500));
         if let Err(e) = stream {
-            debug!("{e}");
+            debug!("could not connect: {e}");
             self.set_state(NetworkState::Offline);
             return None;
         }
