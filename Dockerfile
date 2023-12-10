@@ -1,6 +1,9 @@
 # First, we need an image to build the application
 FROM rust:slim-bullseye as builder
 
+ARG GIT_HASH
+ENV GIT_HASH=$GIT_HASH
+
 WORKDIR /usr/src/hms-mqtt-publish
 
 # The following builds the rust application in two stages:
@@ -14,14 +17,16 @@ WORKDIR /usr/src/hms-mqtt-publish
 # Stage 1: Build the dependencies
 
 COPY ./Cargo.toml ./
+# Remove the hms2mqtt dependency from the Cargo.toml file (compiled in second stage)
+RUN sed -i s/hms2mqtt.*//g Cargo.toml 
 RUN mkdir src && \
     echo "fn main() {println!(\"hello from dependency build\")}" > src/main.rs && \
     cargo build --release
 
 
-# Stage 2: Build the protobuf files
-
-COPY ./build.rs ./
+# Stage 2: Build the application
+COPY ./Cargo.toml ./
+COPY ./hms2mqtt ./hms2mqtt
 COPY ./src ./src
 RUN cargo install --path .
 
