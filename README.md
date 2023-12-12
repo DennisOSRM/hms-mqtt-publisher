@@ -14,7 +14,7 @@ $ cargo r
 
 ### Docker
 
-The latest release is directly deployable via a docker image from [DockerHub](https://hub.docker.com/repository/docker/dennisosrm/hms-mqtt-publisher/general). It is built automatically for the following Linux platforms: 
+The latest release is directly deployable via a docker image from [DockerHub](https://hub.docker.com/r/dennisosrm/hms-mqtt-publisher). It is built automatically for the following Linux platforms: 
  - amd64,
  - arm/v7,
  - and arm64.
