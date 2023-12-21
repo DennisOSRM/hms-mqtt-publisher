@@ -12,7 +12,13 @@ username = "$MQTT_USERNAME"
 password = "$MQTT_PASSWORD"
 port = $MQTT_PORT
 
+[simple_mqtt]
+host = "$MQTT_BROKER_HOST"
+username = "$MQTT_USERNAME"
+password = "$MQTT_PASSWORD"
+port = $MQTT_PORT
+
 EOF
 
 # start mqtt publisher
-hms-mqtt-publish
+hms-mqtt-publish $@
