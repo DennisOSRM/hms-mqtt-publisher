@@ -44,7 +44,7 @@ fn main() {
 
     let mut output_channels: Vec<Box<dyn MetricCollector>> = Vec::new();
     if let Some(config) = config.home_assistant {
-        info!("Publishing to Home Assistent");
+        info!("Publishing to Home Assistant");
         output_channels.push(Box::new(HomeAssistant::<RumqttcWrapper>::new(&config)));
     }
 
