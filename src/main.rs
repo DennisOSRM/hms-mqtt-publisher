@@ -1,29 +1,23 @@
 // TODO: support CA33 command to take over metrics consumption
 // TODO: support publishing to S-Miles cloud, too
 
+mod config;
 mod logging;
 mod rumqttc_wrapper;
 
 use hms2mqtt::home_assistant::HomeAssistant;
 use hms2mqtt::inverter::Inverter;
 use hms2mqtt::metric_collector::MetricCollector;
-use hms2mqtt::mqtt_config;
 use hms2mqtt::simple_mqtt::SimpleMqtt;
-use mqtt_config::MqttConfig;
+use log::{error, info};
 use rumqttc_wrapper::RumqttcWrapper;
-use serde_derive::Deserialize;
-use std::fs;
+
+use std::env;
+
 use std::thread;
 use std::time::Duration;
 
-use log::{error, info};
-
-#[derive(Debug, Deserialize)]
-struct Config {
-    inverter_host: String,
-    home_assistant: Option<MqttConfig>,
-    simple_mqtt: Option<MqttConfig>,
-}
+use crate::config::Config;
 
 static REQUEST_DELAY: u64 = 30_500;
 
@@ -34,9 +28,11 @@ fn main() {
         error!("Arguments passed. Tool is configured by config.toml in its path");
     }
 
-    let filename = "config.toml";
-    let contents = fs::read_to_string(filename).expect("Could not read config.toml");
-    let config: Config = toml::from_str(&contents).expect("toml config unparsable");
+    let config = Config::load();
+    if !config.is_valid() {
+        error!("configuration is invalid: {config:?}");
+        return;
+    }
 
     info!("inverter host: {}", config.inverter_host);
 
