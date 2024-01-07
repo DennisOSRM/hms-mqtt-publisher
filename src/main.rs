@@ -34,12 +34,26 @@ fn main() {
         error!("Arguments passed. Tool is configured by config.toml in its path");
     }
 
-    let filename = "config.toml";
-    let contents = fs::read_to_string(filename).expect("Could not read config.toml");
+    // load configuration from current working dir, or relative to executable if former location fails
+    let mut path = std::env::current_dir().expect("can't retrieve current dir");
+    path.push("config.toml");
+    if !path.exists() {
+        info!(
+            "{} does not exist. Trying relative path",
+            path.to_str().expect("Cannot retrieve path")
+        );
+        path = std::env::current_exe().expect("Unable to get current executable path");
+        path.pop();
+        path.push("config.toml");
+    }
+    info!(
+        "loading configuration from {}",
+        path.to_str().expect("Cannot retrieve path")
+    );
+    let contents = fs::read_to_string(path).expect("Could not read config.toml");
     let config: Config = toml::from_str(&contents).expect("toml config unparsable");
 
     info!("inverter host: {}", config.inverter_host);
-
     let mut inverter = Inverter::new(&config.inverter_host);
 
     let mut output_channels: Vec<Box<dyn MetricCollector>> = Vec::new();
