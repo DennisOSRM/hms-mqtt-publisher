@@ -21,11 +21,13 @@ use log::{error, info};
 #[derive(Debug, Deserialize)]
 struct Config {
     inverter_host: String,
+    coop_mode: Option<bool>,
     home_assistant: Option<MqttConfig>,
     simple_mqtt: Option<MqttConfig>,
 }
 
-static REQUEST_DELAY: u64 = 30_500;
+static REQUEST_DELAY_DEFAULT: u64 = 30_500;
+static REQUEST_DELAY_COOP_MODE: u64 = 60_500;
 
 fn main() {
     logging::init_logger();
@@ -69,12 +71,18 @@ fn main() {
 
     loop {
         if let Some(r) = inverter.update_state() {
+            // TODO: this has to move into the Inverter struct in an async implementation
             output_channels.iter_mut().for_each(|channel| {
                 channel.publish(&r);
             })
         }
 
-        // TODO: this has to move into the Inverter struct in an async implementation
-        thread::sleep(Duration::from_millis(REQUEST_DELAY));
+        if config.coop_mode.is_some_and(|value| value) {
+            // In coop mode, the inverter is updated approximately once a minute. This is sparse
+            // enough for the cloud to get updated, too.
+            thread::sleep(Duration::from_millis(REQUEST_DELAY_COOP_MODE));
+        } else {
+            thread::sleep(Duration::from_millis(REQUEST_DELAY_DEFAULT));
+        }
     }
 }
