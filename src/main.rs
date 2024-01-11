@@ -71,15 +71,15 @@ fn main() {
 
     loop {
         if let Some(r) = inverter.update_state() {
-            // TODO: this has to move into the Inverter struct in an async implementation
             output_channels.iter_mut().for_each(|channel| {
                 channel.publish(&r);
             })
         }
-
+        
+        // TODO: the sleep has to move into the Inverter struct in an async implementation
         if config.coop_mode.is_some_and(|value| value) {
             // In coop mode, the inverter is updated approximately once a minute. This is sparse
-            // enough for the cloud to get updated, too.
+            // enough for the cloud to get updated, too.   
             thread::sleep(Duration::from_millis(REQUEST_DELAY_COOP_MODE));
         } else {
             thread::sleep(Duration::from_millis(REQUEST_DELAY_DEFAULT));
