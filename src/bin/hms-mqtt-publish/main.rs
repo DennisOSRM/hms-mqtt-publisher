@@ -21,11 +21,12 @@ use log::{error, info};
 #[derive(Debug, Deserialize)]
 struct Config {
     inverter_host: String,
+    update_interval: Option<u64>,
     home_assistant: Option<MqttConfig>,
     simple_mqtt: Option<MqttConfig>,
 }
 
-static REQUEST_DELAY: u64 = 30_500;
+static REQUEST_DELAY_DEFAULT: u64 = 30_500;
 
 fn main() {
     logging::init_logger();
@@ -53,6 +54,21 @@ fn main() {
     let contents = fs::read_to_string(path).expect("Could not read config.toml");
     let config: Config = toml::from_str(&contents).expect("toml config unparsable");
 
+    if config
+        .update_interval
+        .is_some_and(|value| value > REQUEST_DELAY_DEFAULT)
+    {
+        info!(
+            "using non-default update interval of {:.2}s",
+            (config.update_interval.unwrap() as f64 / 1000.)
+        )
+    } else {
+        info!(
+            "using default update interval of {:.2}s",
+            (REQUEST_DELAY_DEFAULT as f64 / 1000.)
+        )
+    }
+
     info!("inverter host: {}", config.inverter_host);
     let mut inverter = Inverter::new(&config.inverter_host);
 
@@ -74,7 +90,14 @@ fn main() {
             })
         }
 
-        // TODO: this has to move into the Inverter struct in an async implementation
-        thread::sleep(Duration::from_millis(REQUEST_DELAY));
+        // TODO: the sleep has to move into the Inverter struct in an async implementation
+        if config
+            .update_interval
+            .is_some_and(|value| value > REQUEST_DELAY_DEFAULT)
+        {
+            thread::sleep(Duration::from_millis(config.update_interval.unwrap()));
+        } else {
+            thread::sleep(Duration::from_millis(REQUEST_DELAY_DEFAULT));
+        }
     }
 }

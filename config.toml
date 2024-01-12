@@ -1,4 +1,5 @@
 inverter_host = "192.168.4.182"
+update_interval = 30500
 
 [home_assistant]
 host = "192.168.178.250"
