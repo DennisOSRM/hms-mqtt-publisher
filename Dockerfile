@@ -27,7 +27,7 @@ RUN mkdir src && \
 # Stage 2: Build the application
 COPY ./Cargo.toml ./
 COPY ./hms2mqtt ./hms2mqtt
-COPY ./src ./src
+COPY ./src/bin/hms-mqtt-publish ./src
 RUN cargo install --path .
 
 # Copy the installed application from the build image to the smaller image.
