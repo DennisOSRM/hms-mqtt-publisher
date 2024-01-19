@@ -8,7 +8,7 @@ on:
 
 jobs:
   clippy_check:
-    runs-on: [self-hosted, linux]
+    runs-on: [linux]
     steps:
       - uses: actions/checkout@v4
       - run: rustup component add clippy
