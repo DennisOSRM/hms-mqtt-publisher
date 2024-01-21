@@ -1,0 +1,2 @@
+- name: rust-rustfmt-check
+  uses: mbrobbel/rustfmt-check@0.8.1
