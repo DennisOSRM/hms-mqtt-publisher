@@ -101,7 +101,7 @@ impl HMSStateResponse {
             json[format!("pv_{}_vol", port.pv_port)] =
                 format!("{:.2}", port.pv_vol as f32 * 0.1).into();
             json[format!("pv_{}_cur", port.pv_port)] =
-                format!("{:.2}", port.pv_cur as f32 * 0.1).into();
+                format!("{:.2}", port.pv_cur as f32 * 0.01).into();
             json[format!("pv_{}_power", port.pv_port)] =
                 format!("{:.2}", port.pv_power as f32 * 0.1).into();
             json[format!("pv_{}_energy_total", port.pv_port)] = port.pv_energy_total.into();
