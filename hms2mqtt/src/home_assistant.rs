@@ -76,7 +76,7 @@ impl HMSStateResponse {
           &self.dtu_sn[split_pos..]
         };
 
-        suffix.to_string
+        suffix.to_string()
     }
 
     fn get_total_efficiency(&self) -> f32 {
