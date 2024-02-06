@@ -72,8 +72,8 @@ impl HMSStateResponse {
 
     fn short_dtu_sn(&self) -> String {
         let suffix = {
-          let split_pos = self.dtu_sn.char_indices().nth_back(8).unwrap().0;
-          &self.dtu_sn[split_pos..]
+            let split_pos = self.dtu_sn.char_indices().nth_back(8).unwrap().0;
+            &self.dtu_sn[split_pos..]
         };
 
         suffix.to_string()
