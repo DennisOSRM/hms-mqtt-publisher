@@ -50,6 +50,7 @@ fn publish_one_message() {
             port: Some(1234),
             username: None,
             password: None,
+            tls: None,
         },
         "-test",
     );
