@@ -1,13 +1,8 @@
 inverter_host = "192.168.4.182"
 update_interval = 30500
 
-[home_assistant]
-host = "192.168.178.250"
-username = "mqttuser"
-password = "MqttPass1"
-port = 1883
-
 [simple_mqtt]
-host = "192.168.178.250"
+host = "ceccee12c4b74d35aa5cfa628cfb5599.s2.eu.hivemq.cloud"
 username = "mqttuser"
 password = "MqttPass1"
+tls = true
