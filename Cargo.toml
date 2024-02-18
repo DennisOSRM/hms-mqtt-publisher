@@ -7,14 +7,14 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
-chrono = "0.4.31"
-env_logger = "0.11.0"
+chrono = "0.4.34"
+env_logger = "0.11.2"
 hms2mqtt = { path = "hms2mqtt" }
 log = "0.4.20"
 rumqttc = "0.23.0"
-serde = { version = "1.0.195", features = ["derive"] }
-serde_derive = "1.0.195"
-toml = "0.8.8"
+serde = { version = "1.0.196", features = ["derive"] }
+serde_derive = "1.0.196"
+toml = "0.8.10"
 
 [package.metadata.cargo-machete]
 ignored = ["serde"]
