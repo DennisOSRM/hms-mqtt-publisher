@@ -7,4 +7,5 @@ pub struct MqttConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub client_id: Option<String>,
+    pub tls: Option<bool>,
 }

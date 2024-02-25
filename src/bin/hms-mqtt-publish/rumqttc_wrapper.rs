@@ -5,7 +5,12 @@ use hms2mqtt::{
     mqtt_wrapper::{self},
 };
 use log::warn;
-use rumqttc::{Client, MqttOptions, QoS::AtMostOnce};
+use rumqttc::{
+    tokio_rustls::{self, rustls::ClientConfig},
+    Client, MqttOptions,
+    QoS::AtMostOnce,
+    Transport,
+};
 
 pub struct RumqttcWrapper {
     client: Client,
@@ -59,15 +64,40 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
 
     fn new(config: &MqttConfig, suffix: &str) -> Self {
 
+        let use_tls = config.tls.is_some_and(|tls| tls);
+
         let mut client_id = config.client_id.as_deref().unwrap_or("hms-mqtt-publish").to_string();
         client_id.push_str(suffix);
 
         let mut mqttoptions = MqttOptions::new(
             &client_id, 
             &config.host,
-            config.port.unwrap_or(1883),
+            config.port.unwrap_or_else(|| {
+                if use_tls {
+                    return 8883;
+                }
+                1883
+            }),
         );
         mqttoptions.set_keep_alive(Duration::from_secs(5));
+        if use_tls {
+            // Use rustls-native-certs to load root certificates from the operating system.
+            let mut roots = tokio_rustls::rustls::RootCertStore::empty();
+            for cert in
+                rustls_native_certs::load_native_certs().expect("could not load platform certs")
+            {
+                roots
+                    .add(&tokio_rustls::rustls::Certificate(cert.to_vec()))
+                    .unwrap();
+            }
+
+            let client_config = ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+
+            mqttoptions.set_transport(Transport::tls_with_config(client_config.into()));
+        }
 
         //parse the mqtt authentication options
         if let Some((username, password)) = match (&config.username, &config.password) {
