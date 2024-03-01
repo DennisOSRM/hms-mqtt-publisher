@@ -79,16 +79,11 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         if use_tls {
             // Use rustls-native-certs to load root certificates from the operating system.
             let mut roots = tokio_rustls::rustls::RootCertStore::empty();
-            for cert in
-                rustls_native_certs::load_native_certs().expect("could not load platform certs")
-            {
-                roots
-                    .add(&tokio_rustls::rustls::Certificate(cert.to_vec()))
-                    .unwrap();
-            }
+            rustls_native_certs::load_native_certs().expect("could not load platform certs").into_iter().for_each(|cert| {
+                roots.add(cert).unwrap();
+            });
 
             let client_config = ClientConfig::builder()
-                .with_safe_defaults()
                 .with_root_certificates(roots)
                 .with_no_client_auth();
 
@@ -105,7 +100,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             mqttoptions.set_credentials(username, password);
         }
 
-        let (mut client, mut connection) = Client::new(mqttoptions, 512);
+        let (client, mut connection) = Client::new(mqttoptions, 512);
 
         thread::spawn(move || {
             // keep polling the event loop to make sure outgoing messages get sent
