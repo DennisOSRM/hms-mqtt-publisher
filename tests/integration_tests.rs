@@ -51,6 +51,7 @@ fn publish_one_message() {
             username: None,
             password: None,
             tls: None,
+            client_id: Some("myclient".to_string()),
         },
         "-test",
     );
