@@ -79,9 +79,12 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         if use_tls {
             // Use rustls-native-certs to load root certificates from the operating system.
             let mut roots = tokio_rustls::rustls::RootCertStore::empty();
-            rustls_native_certs::load_native_certs().expect("could not load platform certs").into_iter().for_each(|cert| {
-                roots.add(cert).unwrap();
-            });
+            rustls_native_certs::load_native_certs()
+                .expect("could not load platform certs")
+                .into_iter()
+                .for_each(|cert| {
+                    roots.add(cert).unwrap();
+                });
 
             let client_config = ClientConfig::builder()
                 .with_root_certificates(roots)
