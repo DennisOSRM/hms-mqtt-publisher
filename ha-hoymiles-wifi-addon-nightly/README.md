@@ -1,6 +1,10 @@
-# Home Assistant Add-on
+# Home Assistant Add-on - Nightly
 
-> Note: this is the nightly version of the add-on that is used for testing.
+> THIS ADDON SHOULD ONLY BE USED FOR TESTING!
+
+> This is the nightly version of the add-on that is used for testing,
+> it references the latest build of the underlying rust application
+> and may not always work.
 
 This tool can directly run inside Home Assistant OS as an addon. To get started, add the URL of this repository to the add-on store in Home Assistant and install the add-on. Alternatively, you can also run it stand-alone on any machine that supports rust or docker (see section below).
 
