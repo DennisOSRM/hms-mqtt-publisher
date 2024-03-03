@@ -18,6 +18,7 @@ options:                          # Default options value for the add-on.
   mqtt_username: ''
   mqtt_password: ''
   mqtt_port: 1883
+  update_interval: 30500
   debug_logging: false
 schema:                            # Schema validation for the options.
   inverter_host: str
@@ -25,4 +26,5 @@ schema:                            # Schema validation for the options.
   mqtt_username: str?
   mqtt_password: str?
   mqtt_port: int
+  update_interval: int
   debug_logging: bool

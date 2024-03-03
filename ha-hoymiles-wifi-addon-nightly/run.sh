@@ -13,6 +13,7 @@ MQTT_BROKER_HOST=$(bashio::config 'mqtt_broker_host')
 MQTT_USERNAME=$(bashio::config 'mqtt_username')
 MQTT_PASSWORD=$(bashio::config 'mqtt_password')
 MQTT_PORT=$(bashio::config 'mqtt_port')
+UPDATE_INTERVAL=$(bashio::config 'update_interval')
 DEBUG_LOGGING=$(bashio::config 'debug_logging')
 
 # Use bashio::config values if they are defined, otherwise fall back to bashio::services values
@@ -33,9 +34,18 @@ if [[ -z "$MQTT_BROKER_HOST" ]]; then
   exit 1
 fi
 
+# print a warning if update interval is > 30500 
+if [[ "$UPDATE_INTERVAL" -gt 30500 ]]; then
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "The update_interval is set to a value greater than 30500."
+  echo "This is not recommended and may cause the inverter to become unresponsive."
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+fi
+
 # Create the configuration file
 cat <<EOF > ./config.toml
 inverter_host = "$INVERTER_HOST"
+update_interval = $UPDATE_INTERVAL
 
 [home_assistant]
 host = "$MQTT_BROKER_HOST"
