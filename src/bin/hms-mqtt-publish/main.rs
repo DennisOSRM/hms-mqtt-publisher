@@ -14,7 +14,7 @@ use rumqttc_wrapper::RumqttcWrapper;
 use serde_derive::Deserialize;
 use std::fs;
 use std::thread;
-use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 use log::{error, info};
 
@@ -84,6 +84,20 @@ fn main() {
     }
 
     loop {
+        let now = SystemTime::now();
+        let duration_since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+        let seconds_since_epoch = duration_since_epoch.as_secs();
+
+        let seconds_in_current_minute = seconds_since_epoch % 60;
+        let minutes_since_epoch = seconds_since_epoch / 60;
+        let minutes_in_current_hour = minutes_since_epoch % 60;
+
+        // This is the time at which the S-Miles update seems to take place
+        // Adding some extra time before and after, in which we dont publish
+        if minutes_in_current_hour % 15 == 14 && seconds_in_current_minute >= 15 {
+             thread::sleep(Duration::from_millis(5000 + (60 - seconds_in_current_minute)* 1000));
+        }
+
         if let Some(r) = inverter.update_state() {
             output_channels.iter_mut().for_each(|channel| {
                 channel.publish(&r);
