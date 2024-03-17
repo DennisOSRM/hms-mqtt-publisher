@@ -22,6 +22,7 @@ use log::{error, info};
 struct Config {
     inverter_host: String,
     update_interval: Option<u64>,
+    smiles_cooperation: bool,
     home_assistant: Option<MqttConfig>,
     simple_mqtt: Option<MqttConfig>,
 }
@@ -83,19 +84,26 @@ fn main() {
         output_channels.push(Box::new(SimpleMqtt::<RumqttcWrapper>::new(&config)));
     }
 
+    if config.smiles_cooperation {
+        info!("S-Miles cloud cooperative mode enabled");
+    }
+
     loop {
-        let now = SystemTime::now();
-        let duration_since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
-        let seconds_since_epoch = duration_since_epoch.as_secs();
+        // Do not query the inverter when the S-Miles cloud is about to update
+        if config.smiles_cooperation {
+            let now = SystemTime::now();
+            let duration_since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+            let seconds_since_epoch = duration_since_epoch.as_secs();
 
-        let seconds_in_current_minute = seconds_since_epoch % 60;
-        let minutes_since_epoch = seconds_since_epoch / 60;
-        let minutes_in_current_hour = minutes_since_epoch % 60;
+            let seconds_in_current_minute = seconds_since_epoch % 60;
+            let minutes_since_epoch = seconds_since_epoch / 60;
+            let minutes_in_current_hour = minutes_since_epoch % 60;
 
-        // This is the time at which the S-Miles update seems to take place
-        // Adding some extra time before and after, in which we dont publish
-        if minutes_in_current_hour % 15 == 14 && seconds_in_current_minute >= 15 {
-             thread::sleep(Duration::from_millis(5000 + (60 - seconds_in_current_minute)* 1000));
+            // This is the time at which the S-Miles update seems to take place
+            // Adding some extra time before and after, in which we dont publish
+            if minutes_in_current_hour % 15 == 14 {
+                thread::sleep(Duration::from_millis((15 + 60 - seconds_in_current_minute) * 1000));
+            }
         }
 
         if let Some(r) = inverter.update_state() {
