@@ -14,7 +14,7 @@ use rumqttc_wrapper::RumqttcWrapper;
 use serde_derive::Deserialize;
 use std::fs;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use log::{error, info};
 
@@ -102,7 +102,9 @@ fn main() {
             // This is the time at which the S-Miles update seems to take place
             // Adding some extra time before and after, in which we dont publish
             if minutes_in_current_hour % 15 == 14 {
-                thread::sleep(Duration::from_millis((15 + 60 - seconds_in_current_minute) * 1000));
+                thread::sleep(Duration::from_millis(
+                    (15 + 60 - seconds_in_current_minute) * 1000,
+                ));
             }
         }
 
