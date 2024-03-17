@@ -84,7 +84,12 @@ fn main() {
         output_channels.push(Box::new(SimpleMqtt::<RumqttcWrapper>::new(&config)));
     }
 
-    if config.smiles_cooperation {
+    if config
+        .smiles_cooperation
+        .is_some_and(|value| value) {
+            info!("S-Miles cloud cooperative mode enabled");
+        }
+    {
         info!("S-Miles cloud cooperative mode enabled");
     }
 
