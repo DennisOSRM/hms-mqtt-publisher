@@ -22,7 +22,7 @@ use log::{error, info};
 struct Config {
     inverter_host: String,
     update_interval: Option<u64>,
-    smiles_cooperation: bool,
+    smiles_cooperation: Option<bool>,
     home_assistant: Option<MqttConfig>,
     simple_mqtt: Option<MqttConfig>,
 }
@@ -84,18 +84,16 @@ fn main() {
         output_channels.push(Box::new(SimpleMqtt::<RumqttcWrapper>::new(&config)));
     }
 
-    if config
-        .smiles_cooperation
-        .is_some_and(|value| value) {
-            info!("S-Miles cloud cooperative mode enabled");
-        }
+    if config.smiles_cooperation.is_some_and(|value| value) {
+        info!("S-Miles cloud cooperative mode enabled");
+    }
     {
         info!("S-Miles cloud cooperative mode enabled");
     }
 
     loop {
         // Do not query the inverter when the S-Miles cloud is about to update
-        if config.smiles_cooperation {
+        if config.smiles_cooperation.is_some_and(|value| value) {
             let now = SystemTime::now();
             let duration_since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
             let seconds_since_epoch = duration_since_epoch.as_secs();
