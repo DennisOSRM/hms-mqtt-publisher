@@ -26,6 +26,11 @@ The parameters to access the inverter and MQTT instance are pulled from environm
 - `$MQTT_PASSWORD` (optional)
 - `$MQTT_PORT` (optional)
 
+### Ansible (systemd)
+
+You can use the [bellackn.homelab.hms-mqtt-publisher](https://github.com/bellackn/ansible-collection-homelab/blob/main/roles/hms_mqtt_publisher/README.md)
+role to deploy hms-mqtt-publisher as a systemd service to a remote host. Check the role's documentation to see configuration options and setup instructions.
+
 ## Note of caution
 Please note: The tool does not come with any guarantees and if by chance you fry your inverter with a funny series of bits, you are on your own. That being said, no inverters have been harmed during development. 
 
