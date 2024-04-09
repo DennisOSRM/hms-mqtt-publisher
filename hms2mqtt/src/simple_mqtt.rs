@@ -25,6 +25,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         debug!("{hms_state}");
 
+        let inverter_id = &hms_state.dtu_sn;
         let d = UNIX_EPOCH + Duration::from_secs(hms_state.time as u64);
         let datetime = DateTime::<Local>::from(d);
         let inverter_local_time = datetime.format("%Y-%m-%d %H:%M:%S.%f").to_string();
@@ -47,6 +48,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
 
         // TODO: this section bears a lot of repetition. Investigate if there's a more idiomatic way to get the same result, perhaps using a macro
         let topic_payload_pairs = [
+            ("hms800wt2/inverter_id", inverter_id.to_string()),
             ("hms800wt2/inverter_local_time", inverter_local_time),
             ("hms800wt2/pv_current_power", pv_current_power.to_string()),
             ("hms800wt2/pv_daily_yield", pv_daily_yield.to_string()),
