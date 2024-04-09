@@ -25,9 +25,9 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         debug!("{hms_state}");
 
-        let inverter_id = hms_state.inverter_state[0].inv_id;
         let d = UNIX_EPOCH + Duration::from_secs(hms_state.time as u64);
         let datetime = DateTime::<Local>::from(d);
+        let inverter_id = hms_state.inverter_state[0].inv_id;
         let inverter_local_time = datetime.format("%Y-%m-%d %H:%M:%S.%f").to_string();
 
         let pv_current_power = hms_state.pv_current_power as f32 / 10.;
