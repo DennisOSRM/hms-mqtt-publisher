@@ -22,7 +22,7 @@ The following mqtt options can be acquired via the home assistant API if availab
 - `mqtt_port`: The port of your MQTT broker (default is 1883 for unencrypted MQTT).
 
 The update_interval setting controls the frequency of the updates. This should not be
-set to a value less than 30 seconds (see limitations below).
+set to a value less than 30 seconds (see limitations below), any smaller values will be ignored.
 
 - `update_interval: 30500`: The interval in milliseconds between updates.
 
@@ -43,6 +43,6 @@ Please note: The tool does not come with any guarantees and if by chance you fry
 
 ## Known limitations
 
-- One can only fetch updates approximately twice per minute. The inverter firmware seems to implement a mandatory wait period of a little more than 30 seconds. If one makes a request within 30 seconds of the previous one, then the inverter will reply with the previous reading and restart the countdown. It will also not send updated values to S-Miles Cloud if this happens. 
+- One can only fetch updates approximately twice per minute. The inverter firmware seems to implement a mandatory wait period of a little more than 30 seconds. If one makes a request within 30 seconds of the previous one, the inverter will reply with the previous reading and restart the countdown. It will also not send updated values to S-Miles Cloud if this happens.
 
 - The tools was developed for (and with an) HMS-800W-T2. It may work with the other inverters from the series, but is untested at the time of writing
