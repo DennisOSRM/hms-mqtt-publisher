@@ -25,21 +25,21 @@ DEBUG_LOGGING=${DEBUG_LOGGING:-'false'}
 
 # Check if the required configs are provided
 if [[ -z "$INVERTER_HOST" ]]; then
-  echo "The inverter_host is not configured."
-  exit 1
+    echo "The inverter_host is not configured."
+    exit 1
 fi
 
 if [[ -z "$MQTT_BROKER_HOST" ]]; then
-  echo "The mqtt_broker_host is not configured."
-  exit 1
+    echo "The mqtt_broker_host is not configured."
+    exit 1
 fi
 
-# print a warning if update interval is > 30500 
-if [[ "$UPDATE_INTERVAL" -gt 30500 ]]; then
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-  echo "The update_interval is set to a value greater than 30500."
-  echo "This is not recommended and may cause the inverter to become unresponsive."
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+# print a warning if update interval is < 60500
+if [[ "$UPDATE_INTERVAL" -lt 60500 ]]; then
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "The update_interval is set to a value lower than 60500."
+    echo "This is not recommended and may cause the inverter to become unresponsive."
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 fi
 
 # Create the configuration file
@@ -56,7 +56,7 @@ EOF
 
 # if DEBUG_LOGGING is true, set the RUST_LOG=debug environment variable to enable debug logging
 if [[ "$DEBUG_LOGGING" == "true" ]]; then
-  export RUST_LOG=debug
+    export RUST_LOG=debug
 fi
 
 # Execute the application
