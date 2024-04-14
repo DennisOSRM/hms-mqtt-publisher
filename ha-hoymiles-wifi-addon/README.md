@@ -11,14 +11,14 @@ To set up the add-on, fill in the IP of the inverter host:
 The following mqtt options can be acquired via the home assistant API if available:
 
 - `mqtt_broker_host`: The hostname or IP address of your MQTT broker.
-- `mqtt_username`: The username for your MQTT broker ()
+- `mqtt_username`: The username for your MQTT broker.
 - `mqtt_password`: The password for your MQTT broker. Keep this secret!
 - `mqtt_port`: The port of your MQTT broker (default is 1883 for unencrypted MQTT).
 
 The update_interval setting controls the frequency of the updates. This should not be
 set to a value less than 30 seconds (see limitations below), any smaller values will be ignored.
 
-- `update_interval: 30500`: The interval in milliseconds between updates.
+- `update_interval: 60500`: The interval in milliseconds between updates.
 
 ## Example configuration
 
