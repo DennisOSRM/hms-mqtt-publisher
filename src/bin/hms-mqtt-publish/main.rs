@@ -86,9 +86,8 @@ fn main() {
 
     if config.smiles_cooperation.is_some_and(|value| value) {
         info!("S-Miles cloud cooperative mode enabled");
-    }
-    {
-        info!("S-Miles cloud cooperative mode enabled");
+    } else {
+        info!("S-Miles cloud cooperative mode disabled");
     }
 
     loop {
