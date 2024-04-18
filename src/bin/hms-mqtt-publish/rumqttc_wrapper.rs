@@ -104,12 +104,14 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
     fn new(config: &MqttConfig, suffix: &str) -> Self {
         let use_tls = config.tls.is_some_and(|tls| tls);
 
+        // configured client ids are final; the suffix only keeps the fallback distinct
+        let client_id = config
+            .client_id
+            .clone()
+            .unwrap_or_else(|| format!("hms-mqtt-publish{suffix}"));
+        let status_topic = format!("{client_id}/status");
         let mut mqttoptions = MqttOptions::new(
-            // configured client ids are final; the suffix only keeps the fallback distinct
-            config
-                .client_id
-                .clone()
-                .unwrap_or_else(|| format!("hms-mqtt-publish{suffix}")),
+            client_id,
             &config.host,
             broker_port(config),
         );
@@ -127,8 +129,17 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         } {
             mqttoptions.set_credentials(username, password);
         }
+        mqttoptions.set_last_will(rumqttc::LastWill::new(
+            &status_topic,
+            "offline",
+            rumqttc::QoS::ExactlyOnce,
+            true,
+        ));
 
         let (client, mut connection) = Client::new(mqttoptions, 512);
+
+        // Birth message
+        let _ = client.publish(&status_topic, rumqttc::QoS::ExactlyOnce, true, "online");
 
         let (sender, incoming) = mpsc::channel();
         let subscriptions: Arc<Mutex<Vec<(String, rumqttc::QoS)>>> = Arc::default();
