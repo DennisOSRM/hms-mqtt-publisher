@@ -39,9 +39,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
-          images: ${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY_NIGHTLY }}
+          images: ${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY_NIGHTLY }}-${{ github.ref_name }}
           tags: |
-            type=raw,value=nightly-${{ github.ref_name }}-${{ steps.current_date.outputs.date }}
+            type=raw,value=nightly-${{ steps.current_date.outputs.date }}
             type=raw,value=latest
 
       - name: Build and push Docker image
