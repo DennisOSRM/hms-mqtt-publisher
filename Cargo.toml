@@ -6,14 +6,14 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-anyhow = "1.0.79"
-env_logger = "0.11.2"
+anyhow = "1.0.86"
+env_logger = "0.11.5"
 hms2mqtt = { path = "hms2mqtt" }
-log = "0.4.20"
+log = "0.4.22"
 rumqttc = "0.24.0"
-serde = { version = "1.0.196", features = ["derive"] }
-serde_derive = "1.0.196"
-toml = "0.8.10"
+serde = { version = "1.0.209", features = ["derive"] }
+serde_derive = "1.0.209"
+toml = "0.8.19"
 rustls-native-certs = "0.8.0"
 
 [package.metadata.cargo-machete]
