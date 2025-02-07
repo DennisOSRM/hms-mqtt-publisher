@@ -63,10 +63,14 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
     }
 
     fn new(config: &MqttConfig, suffix: &str) -> Self {
+
         let use_tls = config.tls.is_some_and(|tls| tls);
 
+        let mut client_id = config.client_id.as_deref().unwrap_or("hms-mqtt-publish").to_string();
+        client_id.push_str(suffix);
+
         let mut mqttoptions = MqttOptions::new(
-            "hms800wt2-mqtt-publisher".to_string() + suffix,
+            &client_id, 
             &config.host,
             config.port.unwrap_or_else(|| {
                 if use_tls {
