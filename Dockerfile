@@ -39,8 +39,6 @@ FROM debian:bullseye-slim
 # Copy the installed application from the build image to the smaller image.
 COPY --from=builder /usr/local/cargo/bin/hms-mqtt-publish /usr/local/bin/hms-mqtt-publish
 
-# Generate the config file from given environment variables
-RUN echo "inverter_host = \"$INVERTER_HOST\" \n\n[home_assistant] \nhost = \"$MQTT_BROKER_HOST\"\nusername = \"$MQTT_USERNAME\"\npassword = \"$MQTT_PASSWORD\"\nport = $MQTT_PORT\n" > config.toml
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
-# Run the application
-CMD hms-mqtt-publish
+ENTRYPOINT [ "bin/sh",  "/usr/local/bin/entrypoint.sh"]
