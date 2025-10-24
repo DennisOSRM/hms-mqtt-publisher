@@ -1,5 +1,5 @@
 # First, we need an image to build the application
-FROM rust:slim-bullseye as builder
+FROM rust:slim-bullseye AS builder
 
 ARG GIT_HASH
 ENV GIT_HASH=$GIT_HASH
