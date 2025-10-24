@@ -17,6 +17,7 @@ host = "$MQTT_BROKER_HOST"
 username = "$MQTT_USERNAME"
 password = "$MQTT_PASSWORD"
 port = $MQTT_PORT
+client_id = "$MQTT_CLIENT_ID"
 
 EOF
 
