@@ -8,18 +8,28 @@ message RealDataResDTO {
   int32 time = 5;
 }
 
+// Field numbers follow the single-phase inverter message (SGSMO) of the S-Miles Installer app.
 message InverterState {
   int64 inv_id = 1;
-  int32 port_id = 2;
+  int32 port_id = 2;          // app name: ver. Kept as "port_id" because it keys MQTT/HA entity names
   int32 grid_voltage = 3;     // [V], factor 0.1
   int32 grid_freq = 4;        // [Hz], factor 0.01
   int32 pv_current_power = 5; // [W], factor 0.1
-  int32 unknown1 = 7;
-  int32 unknown2 = 8;         // power limit? [%], factor 0.1
+  int32 reactive_power = 6;   // app name: q [var], factor 0.1
+  int32 ac_current = 7;       // app name: i [A], factor 0.01
+  int32 power_factor = 8;     // app name: pf, factor 0.001
   int32 temperature = 9;      // [C], factor 0.1
-  int32 unknown3 = 10;
-  int32 unknown4 = 12;
-  int32 bit_field = 20;       // a guess
+  int32 warning_count = 10;   // app name: wnum
+  int32 crc = 11;
+  int32 link = 12;            // >0: last DTU read of this inverter succeeded; 0: values are stale
+  int32 power_limit = 13;     // app name: p_lim [%], factor 0.1
+  int32 mi_signal = 14;       // radio signal strength
+  int32 coa_s = 15;
+  int32 lim_p = 16;           // active power setpoint
+  int32 lim_q = 17;           // reactive power setpoint
+  int32 limr_pf = 18;         // power factor setpoint
+  uint64 route_info = 19;
+  int32 bit_field = 20;       // not in the app schema; low byte freezes together with stale data
 }
 
 message PortState {
@@ -30,7 +40,8 @@ message PortState {
   int32 pv_power = 5;         // [W], factor 0.1
   int32 pv_energy_total = 6;  // [Wh]
   int32 pv_daily_yield = 7;   // [Wh]
-  int32 bitfield = 8;         // bitfield is a guess
+  int32 code = 8;             // per-port status/error code
+  int32 e_delta = 9;
 }
 
 message HMSStateResponse {

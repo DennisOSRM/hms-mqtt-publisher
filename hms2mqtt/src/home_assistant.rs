@@ -71,7 +71,8 @@ impl HMSStateResponse {
     }
 
     fn short_dtu_sn(&self) -> String {
-        self.dtu_sn[..8].to_string()
+        // first 8 characters; shorter serials are used as they are
+        self.dtu_sn.chars().take(8).collect()
     }
 
     fn get_total_efficiency(&self) -> f32 {
@@ -106,6 +107,7 @@ impl HMSStateResponse {
                 format!("{:.2}", port.pv_power as f32 * 0.1).into();
             json[format!("pv_{}_energy_total", port.pv_port)] = port.pv_energy_total.into();
             json[format!("pv_{}_daily_yield", port.pv_port)] = port.pv_daily_yield.into();
+            json[format!("pv_{}_code", port.pv_port)] = port.code.into();
         }
         // Convert each InverterState to json (for a HMS-XXXW-2T, there is only one inverter)
         for inverter in self.inverter_state.iter() {
@@ -117,6 +119,16 @@ impl HMSStateResponse {
                 format!("{:.2}", inverter.pv_current_power as f32 * 0.1).into();
             json[format!("inv_{}_temperature", inverter.port_id)] =
                 format!("{:.2}", inverter.temperature as f32 * 0.1).into();
+            json[format!("inv_{}_ac_current", inverter.port_id)] =
+                format!("{:.2}", inverter.ac_current as f32 * 0.01).into();
+            json[format!("inv_{}_reactive_power", inverter.port_id)] =
+                format!("{:.2}", inverter.reactive_power as f32 * 0.1).into();
+            json[format!("inv_{}_power_factor", inverter.port_id)] =
+                format!("{:.3}", inverter.power_factor as f32 * 0.001).into();
+            json[format!("inv_{}_power_limit", inverter.port_id)] =
+                format!("{:.1}", inverter.power_limit as f32 * 0.1).into();
+            json[format!("inv_{}_warning_count", inverter.port_id)] = inverter.warning_count.into();
+            json[format!("inv_{}_mi_signal", inverter.port_id)] = inverter.mi_signal.into();
         }
 
         json
@@ -183,6 +195,12 @@ impl HMSStateResponse {
                     &format!("PV {} Energy Total", idx),
                     &format!("pv_{}_energy_total", idx),
                 ),
+                SensorConfig::diagnostic_value(
+                    state_topic,
+                    &device_config,
+                    &format!("PV {} Status Code", idx),
+                    &format!("pv_{}_code", idx),
+                ),
             ]);
         }
         for inverter in &self.inverter_state {
@@ -212,8 +230,160 @@ impl HMSStateResponse {
                     &format!("Inverter {} Grid Frequency", idx),
                     &format!("inv_{}_grid_freq", idx),
                 ),
+                SensorConfig::current(
+                    state_topic,
+                    &device_config,
+                    &format!("Inverter {} AC Current", idx),
+                    &format!("inv_{}_ac_current", idx),
+                ),
+                SensorConfig::reactive_power(
+                    state_topic,
+                    &device_config,
+                    &format!("Inverter {} Reactive Power", idx),
+                    &format!("inv_{}_reactive_power", idx),
+                ),
+                SensorConfig::power_factor(
+                    state_topic,
+                    &device_config,
+                    &format!("Inverter {} Power Factor", idx),
+                    &format!("inv_{}_power_factor", idx),
+                ),
+                SensorConfig::percentage(
+                    state_topic,
+                    &device_config,
+                    &format!("Inverter {} Power Limit", idx),
+                    &format!("inv_{}_power_limit", idx),
+                ),
+                SensorConfig::diagnostic_value(
+                    state_topic,
+                    &device_config,
+                    &format!("Inverter {} Warning Count", idx),
+                    &format!("inv_{}_warning_count", idx),
+                ),
+                SensorConfig::diagnostic_value(
+                    state_topic,
+                    &device_config,
+                    &format!("Inverter {} Signal", idx),
+                    &format!("inv_{}_mi_signal", idx),
+                ),
             ]);
         }
         sensors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{response, test_config, RecordingMqtt};
+
+    #[test]
+    fn short_serial_does_not_panic() {
+        for sn in ["", "4143", "414312345678"] {
+            let mut ha = HomeAssistant::<RecordingMqtt>::new(&test_config());
+            ha.publish(&response(sn, 1, 2));
+            assert!(!ha.client.published.is_empty());
+        }
+        assert_eq!(response("414312345678", 1, 2).short_dtu_sn(), "41431234");
+        assert_eq!(response("4143", 1, 2).short_dtu_sn(), "4143");
+    }
+
+    fn sample() -> HMSStateResponse {
+        let mut r = response("414312345678", 1, 2);
+        r.pv_current_power = 5500; // 550.0 W
+        r.pv_daily_yield = 1434;
+        let inv = &mut r.inverter_state[0];
+        inv.grid_voltage = 2310;
+        inv.grid_freq = 5003;
+        inv.pv_current_power = 5500;
+        inv.temperature = 504;
+        inv.ac_current = 238;
+        inv.power_factor = 999;
+        inv.power_limit = 1000;
+        inv.warning_count = 4;
+        r.port_state[0].pv_vol = 350;
+        r.port_state[0].pv_cur = 785;
+        r.port_state[0].pv_power = 2750;
+        r.port_state[0].pv_daily_yield = 552;
+        r.port_state[1].pv_power = 3058;
+        r
+    }
+
+    #[test]
+    fn payload_values_are_scaled() {
+        let json = sample().to_json_payload();
+        assert_eq!(json["pv_current_power"], "550.00");
+        assert_eq!(json["pv_daily_yield"], 1434);
+        assert_eq!(json["pv_1_vol"], "35.00");
+        assert_eq!(json["pv_1_cur"], "7.85");
+        assert_eq!(json["pv_1_power"], "275.00");
+        assert_eq!(json["pv_1_daily_yield"], 552);
+        assert_eq!(json["inv_1_grid_voltage"], "231.00");
+        assert_eq!(json["inv_1_grid_freq"], "50.03");
+        assert_eq!(json["inv_1_temperature"], "50.40");
+        assert_eq!(json["inv_1_ac_current"], "2.38");
+        assert_eq!(json["inv_1_power_factor"], "0.999");
+        assert_eq!(json["inv_1_power_limit"], "100.0");
+        assert_eq!(json["inv_1_warning_count"], 4);
+    }
+
+    #[test]
+    fn efficiency_is_ac_over_dc_power_and_safe_at_night() {
+        // 5500 / (2750 + 3058) = 94.697 %
+        assert_eq!(sample().to_json_payload()["efficiency"], "94.70");
+        assert_eq!(
+            response("414312345678", 1, 2).to_json_payload()["efficiency"],
+            "0.00"
+        );
+    }
+
+    #[test]
+    fn every_discovered_sensor_has_a_value_in_the_state_payload() {
+        for (inverters, ports) in [(1, 1), (1, 2), (1, 4), (0, 2)] {
+            let r = response("414312345678", inverters, ports);
+            let json = r.to_json_payload();
+            let configs = r.create_sensor_configs("solar/hms_41431234/state");
+            assert!(!configs.is_empty());
+            for config in configs {
+                let config = serde_json::to_value(&config).unwrap();
+                let template = config["value_template"].as_str().unwrap();
+                let key = template
+                    .trim_start_matches("{{ value_json.")
+                    .trim_end_matches(" }}");
+                assert!(
+                    !json[key].is_null(),
+                    "sensor {} reads missing key {key}",
+                    config["unique_id"]
+                );
+                assert_eq!(config["state_topic"], "solar/hms_41431234/state");
+            }
+        }
+    }
+
+    #[test]
+    fn publishes_discovery_under_the_short_serial() {
+        let mut ha = HomeAssistant::<RecordingMqtt>::new(&test_config());
+        ha.publish(&sample());
+        let topics: Vec<&str> = ha
+            .client
+            .published
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect();
+        assert!(topics.contains(&"solar/hms_41431234/state"));
+        assert!(
+            topics
+                .iter()
+                .any(|t| t.starts_with("homeassistant/sensor/hms_41431234/")
+                    && t.ends_with("/config"))
+        );
+    }
+
+    #[test]
+    fn any_number_of_ports_and_inverters() {
+        for (inverters, ports) in [(0, 0), (1, 1), (1, 4), (2, 8)] {
+            let mut ha = HomeAssistant::<RecordingMqtt>::new(&test_config());
+            ha.publish(&response("414312345678", inverters, ports));
+        }
     }
 }
