@@ -48,6 +48,8 @@ pub struct SensorConfig {
     device_class: Option<String>, // The type/class of the sensor, e.g. energy, power, temperature, etc.
     #[serde(skip_serializing_if = "Option::is_none")]
     state_class: Option<String>, // The type/class of the state, e.g. measurement, total_increasing, etc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entity_category: Option<String>, // e.g. diagnostic
 }
 
 impl SensorConfig {
@@ -71,7 +73,13 @@ impl SensorConfig {
             value_template,
             device: device_config.clone(),
             state_class,
+            entity_category: None,
         }
+    }
+
+    fn diagnostic(mut self) -> Self {
+        self.entity_category = Some("diagnostic".to_string());
+        self
     }
 
     pub fn string(state_topic: &str, device_config: &DeviceConfig, name: &str, key: &str) -> Self {
@@ -175,5 +183,74 @@ impl SensorConfig {
             Some("Hz".to_string()),
             Some("measurement".to_string()),
         )
+    }
+
+    pub fn reactive_power(
+        state_topic: &str,
+        device_config: &DeviceConfig,
+        name: &str,
+        key: &str,
+    ) -> Self {
+        Self::new_sensor(
+            state_topic,
+            device_config,
+            key,
+            name,
+            Some("reactive_power".to_string()),
+            Some("var".to_string()),
+            Some("measurement".to_string()),
+        )
+    }
+
+    pub fn power_factor(
+        state_topic: &str,
+        device_config: &DeviceConfig,
+        name: &str,
+        key: &str,
+    ) -> Self {
+        Self::new_sensor(
+            state_topic,
+            device_config,
+            key,
+            name,
+            Some("power_factor".to_string()),
+            None,
+            Some("measurement".to_string()),
+        )
+    }
+
+    pub fn percentage(
+        state_topic: &str,
+        device_config: &DeviceConfig,
+        name: &str,
+        key: &str,
+    ) -> Self {
+        Self::new_sensor(
+            state_topic,
+            device_config,
+            key,
+            name,
+            None,
+            Some("%".to_string()),
+            Some("measurement".to_string()),
+        )
+    }
+
+    pub fn diagnostic_value(
+        state_topic: &str,
+        device_config: &DeviceConfig,
+        name: &str,
+        key: &str,
+    ) -> Self {
+        Self::new_sensor(
+            state_topic,
+            device_config,
+            key,
+            name,
+            None,
+            None,
+            Some("measurement".to_string()),
+        )
+        .diagnostic()
     }
 }

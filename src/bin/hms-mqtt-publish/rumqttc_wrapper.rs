@@ -24,6 +24,15 @@ fn match_qos(qos: mqtt_wrapper::QoS) -> rumqttc::QoS {
     }
 }
 
+/// The configured port, or the standard MQTT port for plain (1883) or TLS (8883) connections.
+fn broker_port(config: &MqttConfig) -> u16 {
+    config.port.unwrap_or(if config.tls.is_some_and(|tls| tls) {
+        8883
+    } else {
+        1883
+    })
+}
+
 impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
     fn subscribe(&mut self, topic: &str, qos: mqtt_wrapper::QoS) -> anyhow::Result<()> {
         Ok(self.client.subscribe(topic, match_qos(qos))?)
@@ -68,12 +77,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         let mut mqttoptions = MqttOptions::new(
             "hms800wt2-mqtt-publisher".to_string() + suffix,
             &config.host,
-            config.port.unwrap_or_else(|| {
-                if use_tls {
-                    return 8883;
-                }
-                1883
-            }),
+            broker_port(config),
         );
         mqttoptions.set_keep_alive(Duration::from_secs(5));
         if use_tls {
@@ -116,5 +120,44 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
             warn!("subscription to base topic failed: {e}");
         }
         Self { client }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(port: Option<u16>, tls: Option<bool>) -> MqttConfig {
+        MqttConfig {
+            host: "broker".to_owned(),
+            port,
+            username: None,
+            password: None,
+            tls,
+        }
+    }
+
+    #[test]
+    fn default_ports_follow_tls_setting() {
+        assert_eq!(broker_port(&config(None, None)), 1883);
+        assert_eq!(broker_port(&config(None, Some(false))), 1883);
+        assert_eq!(broker_port(&config(None, Some(true))), 8883);
+        assert_eq!(broker_port(&config(Some(1234), Some(true))), 1234);
+    }
+
+    #[test]
+    fn qos_levels_map_one_to_one() {
+        assert_eq!(
+            match_qos(mqtt_wrapper::QoS::AtMostOnce),
+            rumqttc::QoS::AtMostOnce
+        );
+        assert_eq!(
+            match_qos(mqtt_wrapper::QoS::AtLeastOnce),
+            rumqttc::QoS::AtLeastOnce
+        );
+        assert_eq!(
+            match_qos(mqtt_wrapper::QoS::ExactlyOnce),
+            rumqttc::QoS::ExactlyOnce
+        );
     }
 }

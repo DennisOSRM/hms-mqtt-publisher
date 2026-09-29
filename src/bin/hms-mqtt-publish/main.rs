@@ -28,6 +28,17 @@ struct Config {
 
 static REQUEST_DELAY_DEFAULT: u64 = 30_500;
 
+/// The DTU only serves fresh data about every 30 s, so shorter intervals fall back to the default.
+fn update_interval(configured: Option<u64>) -> u64 {
+    configured
+        .filter(|&value| value > REQUEST_DELAY_DEFAULT)
+        .unwrap_or(REQUEST_DELAY_DEFAULT)
+}
+
+fn parse_config(contents: &str) -> Config {
+    toml::from_str(contents).expect("toml config unparsable")
+}
+
 fn main() {
     logging::init_logger();
     info!("Running revision: {}", env!("GIT_HASH"));
@@ -52,15 +63,13 @@ fn main() {
         path.to_str().expect("Cannot retrieve path")
     );
     let contents = fs::read_to_string(path).expect("Could not read config.toml");
-    let config: Config = toml::from_str(&contents).expect("toml config unparsable");
+    let config = parse_config(&contents);
 
-    if config
-        .update_interval
-        .is_some_and(|value| value > REQUEST_DELAY_DEFAULT)
-    {
+    let interval = update_interval(config.update_interval);
+    if interval != REQUEST_DELAY_DEFAULT {
         info!(
             "using non-default update interval of {:.2}s",
-            (config.update_interval.unwrap() as f64 / 1000.)
+            (interval as f64 / 1000.)
         )
     } else {
         info!(
@@ -91,13 +100,71 @@ fn main() {
         }
 
         // TODO: the sleep has to move into the Inverter struct in an async implementation
-        if config
-            .update_interval
-            .is_some_and(|value| value > REQUEST_DELAY_DEFAULT)
-        {
-            thread::sleep(Duration::from_millis(config.update_interval.unwrap()));
-        } else {
-            thread::sleep(Duration::from_millis(REQUEST_DELAY_DEFAULT));
-        }
+        thread::sleep(Duration::from_millis(interval));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intervals_below_the_dtu_limit_use_the_default() {
+        assert_eq!(update_interval(None), REQUEST_DELAY_DEFAULT);
+        assert_eq!(update_interval(Some(0)), REQUEST_DELAY_DEFAULT);
+        assert_eq!(update_interval(Some(10_000)), REQUEST_DELAY_DEFAULT);
+        assert_eq!(
+            update_interval(Some(REQUEST_DELAY_DEFAULT)),
+            REQUEST_DELAY_DEFAULT
+        );
+        assert_eq!(update_interval(Some(60_000)), 60_000);
+    }
+
+    #[test]
+    fn parses_minimal_config() {
+        let config = parse_config(r#"inverter_host = "192.168.4.182""#);
+        assert_eq!(config.inverter_host, "192.168.4.182");
+        assert!(config.update_interval.is_none());
+        assert!(config.home_assistant.is_none());
+        assert!(config.simple_mqtt.is_none());
+    }
+
+    #[test]
+    fn parses_full_config() {
+        let config = parse_config(
+            r#"
+            inverter_host = "hms.local"
+            update_interval = 60000
+
+            [home_assistant]
+            host = "broker"
+            port = 1883
+
+            [simple_mqtt]
+            host = "broker2"
+            username = "user"
+            password = "secret"
+            tls = true
+            "#,
+        );
+        assert_eq!(config.update_interval, Some(60_000));
+        let ha = config.home_assistant.unwrap();
+        assert_eq!((ha.host.as_str(), ha.port), ("broker", Some(1883)));
+        let sm = config.simple_mqtt.unwrap();
+        assert_eq!(sm.username.as_deref(), Some("user"));
+        assert_eq!(sm.tls, Some(true));
+    }
+
+    #[test]
+    fn repo_config_example_parses() {
+        let contents = include_str!("../../../config.toml");
+        let config = parse_config(contents);
+        assert!(!config.inverter_host.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "toml config unparsable")]
+    fn missing_inverter_host_is_rejected() {
+        parse_config("update_interval = 60000");
     }
 }

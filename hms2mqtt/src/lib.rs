@@ -9,3 +9,5 @@ pub mod simple_mqtt;
 // internal interfaces
 mod home_assistant_config;
 mod protos;
+#[cfg(test)]
+mod test_support;
