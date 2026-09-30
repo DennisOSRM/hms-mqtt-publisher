@@ -3,6 +3,8 @@ name: Publish multi platform Docker image
 on:
   release:
     types: [published]
+  # started by the release-plz workflow for the releases it creates
+  workflow_dispatch:
 
 jobs:
   push_to_registry:

@@ -1,0 +1,18 @@
+[workspace]
+# Nothing is published to crates.io: versions come from the git tags (v0.1 ... v0.4)
+git_only = true
+# only release when the release PR is merged, not on every push to main
+release_always = false
+# binary crate without public API
+semver_check = false
+
+[[package]]
+name = "hms-mqtt-publish"
+git_tag_name = "v{{ version }}"
+# the protocol and publishing code lives in hms2mqtt; list its changes in the changelog, too
+changelog_include = ["hms2mqtt"]
+
+[[package]]
+# internal library, released as part of hms-mqtt-publish
+name = "hms2mqtt"
+release = false
