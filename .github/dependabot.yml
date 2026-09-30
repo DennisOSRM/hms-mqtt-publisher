@@ -16,7 +16,8 @@ updates:
           - "minor"
           - "patch"
     commit-message:
-      prefix: "cargo"
+      prefix: "chore"
+      include: "scope"
 
   # Actions used by the CI workflows
   - package-ecosystem: "github-actions"
@@ -30,6 +31,7 @@ updates:
           - "*"
     commit-message:
       prefix: "ci"
+      include: "scope"
 
   # Base images of the published Docker image
   - package-ecosystem: "docker"
@@ -38,4 +40,5 @@ updates:
       interval: "weekly"
       day: "monday"
     commit-message:
-      prefix: "docker"
+      prefix: "chore"
+      include: "scope"
