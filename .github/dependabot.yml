@@ -6,8 +6,6 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    # also bump the lockfile for compatible releases, not only Cargo.toml requirements
-    versioning-strategy: "increase"
     open-pull-requests-limit: 10
     groups:
       # compatible updates arrive as a single PR; major upgrades stay separate
