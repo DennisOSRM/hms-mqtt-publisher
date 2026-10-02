@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/DennisOSRM/hms-mqtt-publisher/compare/v0.4.0...v0.4.1) - 2026-10-02
+
+### Other
+
+- build Docker images on native ARM runners ([#143](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/143))
+
 ### Added
 
 - TLS support for MQTT connections ([#93](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/93))
