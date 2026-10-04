@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/DennisOSRM/hms-mqtt-publisher/compare/v0.4.0...v0.4.1) - 2026-10-04
+
+### Added
+
+- support multiple inverters with device ids and unique MQTT client ids ([#150](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/150))
+- configure the publisher from environment variables ([#149](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/149))
+
+### Other
+
+- *(deps)* bump the github-actions group across 1 directory with 9 updates ([#148](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/148))
+- *(deps)* update rumqttc requirement from 0.24.0 to 0.25.1 ([#146](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/146))
+- *(deps)* update toml requirement from 0.8.19 to 1.1.6 ([#145](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/145))
+- build Docker images on native ARM runners ([#143](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/143))
+
 ### Added
 
 - TLS support for MQTT connections ([#93](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/93))
