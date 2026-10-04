@@ -5,8 +5,9 @@ git_only = true
 release_always = false
 # binary crate without public API
 semver_check = false
-# only user-facing changes start a release; chore/ci/docs commits are listed in the next one
-release_commits = "^(feat|fix|perf)"
+# only user-facing changes start a release: feat, perf and fix except fix(ci).
+# chore/ci/docs commits are listed in the next release's changelog
+release_commits = '^(feat|perf)[(:!]|^fix(\(([^c)]|c[^i)]|ci[^)])[^)]*\))?!?:'
 
 [[package]]
 name = "hms-mqtt-publish"
