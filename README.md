@@ -40,8 +40,20 @@ Settings are read from `config.toml` in the current directory (or next to the ex
 | `MQTT_USERNAME`    | `username`                            | optional                                          |
 | `MQTT_PASSWORD`    | `password`                            | optional                                          |
 | `MQTT_TLS`         | `tls`                                 | optional, `true` or `false`                       |
+| `MQTT_CLIENT_ID`   | `client_id`                           | optional, default derived from the device id or inverter host |
+| `DEVICE_ID`        | `device_id`                           | optional, see [Multiple inverters](#multiple-inverters) |
 
 Environment variables take precedence over `config.toml`. The `MQTT_*` variables apply to the MQTT outputs configured in `config.toml` (`[home_assistant]`, `[simple_mqtt]`); without any, they enable both. Empty variables count as not set.
+
+### Multiple inverters
+
+Run one instance per inverter and give each a distinct `DEVICE_ID` (or `device_id` in `config.toml`), for example the last digits of its serial number. The device id names the inverter in the Home Assistant entities (`hms_<device id>`) and replaces the `hms800wt2` prefix of the simple MQTT topics. Without it, Home Assistant uses the first 8 characters of the DTU serial number, which are the model and production week and can be the same for several inverters. Leave it unset for a single inverter to keep the existing entity ids.
+
+Each instance connects with its own MQTT client id, derived from the device id or the inverter host, so the instances don't disconnect each other.
+
+### S-Miles cloud
+
+The inverter only uploads to the S-Miles cloud when it is not queried more often than about once a minute. To keep the cloud up to date, set `update_interval = 60500` (or `UPDATE_INTERVAL=60500`), as the Home Assistant add-on does by default.
 
 ### Ansible (systemd)
 

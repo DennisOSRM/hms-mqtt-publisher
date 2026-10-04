@@ -51,6 +51,8 @@ fn publish_one_message() {
             username: None,
             password: None,
             tls: None,
+            client_id: None,
+            device_id: None,
         },
         "-test",
     );

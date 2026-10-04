@@ -9,12 +9,16 @@ use serde_json::json;
 
 pub struct HomeAssistant<MQTT: MqttWrapper> {
     client: MQTT,
+    device_id: Option<String>,
 }
 
 impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
         let client = MQTT::new(config, "-ha");
-        Self { client }
+        Self {
+            client,
+            device_id: config.device_id.clone(),
+        }
     }
 
     fn publish_json(&mut self, topic: &str, payload: serde_json::Value) {
@@ -47,10 +51,14 @@ impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
 
 impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
     fn publish(&mut self, hms_state: &HMSStateResponse) {
-        let config_topic = format!("homeassistant/sensor/hms_{}", hms_state.short_dtu_sn());
-        let state_topic = format!("solar/hms_{}/state", hms_state.short_dtu_sn());
+        let id = self
+            .device_id
+            .clone()
+            .unwrap_or_else(|| hms_state.short_dtu_sn());
+        let config_topic = format!("homeassistant/sensor/hms_{id}");
+        let state_topic = format!("solar/hms_{id}/state");
 
-        let device_config = hms_state.create_sensor_configs(&state_topic);
+        let device_config = hms_state.create_sensor_configs(&state_topic, &id);
 
         self.publish_configs(&config_topic, &device_config);
         self.publish_states(hms_state, &state_topic);
@@ -66,8 +74,8 @@ impl HMSStateResponse {
         "HMS-WiFi".to_string()
     }
 
-    fn get_name(&self) -> String {
-        format!("Hoymiles {} {}", self.get_model(), self.short_dtu_sn())
+    fn get_name(&self, id: &str) -> String {
+        format!("Hoymiles {} {}", self.get_model(), id)
     }
 
     fn short_dtu_sn(&self) -> String {
@@ -134,13 +142,13 @@ impl HMSStateResponse {
         json
     }
 
-    fn create_sensor_configs(&self, state_topic: &str) -> Vec<SensorConfig> {
+    fn create_sensor_configs(&self, state_topic: &str, id: &str) -> Vec<SensorConfig> {
         let mut sensors = Vec::new();
 
         let device_config = DeviceConfig::new(
-            self.get_name(),
+            self.get_name(id),
             self.get_model(),
-            Vec::from([format!("hms_{}", self.short_dtu_sn())]),
+            Vec::from([format!("hms_{id}")]),
         );
 
         // Sensors for the whole inverter
@@ -342,7 +350,7 @@ mod tests {
         for (inverters, ports) in [(1, 1), (1, 2), (1, 4), (0, 2)] {
             let r = response("414312345678", inverters, ports);
             let json = r.to_json_payload();
-            let configs = r.create_sensor_configs("solar/hms_41431234/state");
+            let configs = r.create_sensor_configs("solar/hms_41431234/state", "41431234");
             assert!(!configs.is_empty());
             for config in configs {
                 let config = serde_json::to_value(&config).unwrap();
@@ -377,6 +385,54 @@ mod tests {
                 .any(|t| t.starts_with("homeassistant/sensor/hms_41431234/")
                     && t.ends_with("/config"))
         );
+    }
+
+    #[test]
+    fn device_id_names_topics_and_ids() {
+        let mut config = test_config();
+        config.device_id = Some("roof".to_string());
+        let mut ha = HomeAssistant::<RecordingMqtt>::new(&config);
+        ha.publish(&response("414312345678", 1, 2));
+        let topics: Vec<&str> = ha
+            .client
+            .published
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect();
+        assert!(topics.contains(&"solar/hms_roof/state"));
+        assert!(topics
+            .iter()
+            .all(|t| !t.starts_with("homeassistant/")
+                || t.starts_with("homeassistant/sensor/hms_roof/")));
+        let (_, payload) = ha
+            .client
+            .published
+            .iter()
+            .find(|(t, _)| t.starts_with("homeassistant/"))
+            .unwrap();
+        let config: serde_json::Value = serde_json::from_slice(payload).unwrap();
+        assert!(config["unique_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("hms_roof_"));
+        assert_eq!(config["device"]["name"], "Hoymiles HMS-WiFi roof");
+    }
+
+    #[test]
+    fn inverters_with_the_same_serial_prefix_get_distinct_ids() {
+        let topics = |device_id: &str| {
+            let mut config = test_config();
+            config.device_id = Some(device_id.to_string());
+            let mut ha = HomeAssistant::<RecordingMqtt>::new(&config);
+            ha.publish(&response("414312345678", 1, 2));
+            ha.client
+                .published
+                .iter()
+                .map(|(t, _)| t.clone())
+                .collect::<Vec<_>>()
+        };
+        let (a, b) = (topics("12345678"), topics("12349999"));
+        assert!(a.iter().all(|t| !b.contains(t)));
     }
 
     #[test]

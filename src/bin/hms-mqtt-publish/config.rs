@@ -13,25 +13,33 @@ use serde_derive::Deserialize;
 /// | `MQTT_USERNAME`    | `username` of the MQTT outputs                   |
 /// | `MQTT_PASSWORD`    | `password` of the MQTT outputs                   |
 /// | `MQTT_TLS`         | `tls` of the MQTT outputs (`true` or `false`)    |
+/// | `MQTT_CLIENT_ID`   | `client_id` of the MQTT outputs                  |
+/// | `DEVICE_ID`        | `device_id`                                      |
 ///
 /// The `MQTT_*` variables apply to every MQTT output in `config.toml`. Without any MQTT output
 /// in the file, they configure both the Home Assistant and the simple MQTT output. Empty
 /// variables and empty credentials count as not set.
+///
+/// `device_id` names the inverter in MQTT topics and Home Assistant ids. Set different ids to
+/// run one instance per inverter against the same broker. The MQTT client id defaults to one
+/// derived from `device_id` or `inverter_host`, so that instances don't disconnect each other.
 #[derive(Debug, Default, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub inverter_host: String,
     pub update_interval: Option<u64>,
+    pub device_id: Option<String>,
     pub home_assistant: Option<MqttConfig>,
     pub simple_mqtt: Option<MqttConfig>,
 }
 
-const MQTT_VARIABLES: [&str; 5] = [
+const MQTT_VARIABLES: [&str; 6] = [
     "MQTT_BROKER_HOST",
     "MQTT_PORT",
     "MQTT_USERNAME",
     "MQTT_PASSWORD",
     "MQTT_TLS",
+    "MQTT_CLIENT_ID",
 ];
 
 impl Config {
@@ -58,6 +66,10 @@ impl Config {
             config.update_interval = Some(interval.trim().parse().map_err(|_| {
                 format!("UPDATE_INTERVAL must be a number of milliseconds, got '{interval}'")
             })?);
+        }
+        if let Some(device_id) = var("DEVICE_ID") {
+            info!("DEVICE_ID overrides device_id");
+            config.device_id = Some(device_id);
         }
 
         if MQTT_VARIABLES.iter().any(|name| var(name).is_some()) {
@@ -99,17 +111,32 @@ impl Config {
                 if tls.is_some() {
                     mqtt.tls = tls;
                 }
+                if let Some(client_id) = var("MQTT_CLIENT_ID") {
+                    mqtt.client_id = Some(client_id);
+                }
             }
             info!("MQTT_* environment variables override the MQTT settings");
         }
 
-        // `username = ""` means no credentials, not an empty user name
+        config.device_id = config.device_id.take().filter(|id| !id.trim().is_empty());
+        let default_client_id = format!(
+            "hms-mqtt-publish-{}",
+            client_id_safe(config.device_id.as_deref().unwrap_or(&config.inverter_host))
+        );
         for mqtt in [&mut config.home_assistant, &mut config.simple_mqtt]
             .into_iter()
             .flatten()
         {
+            // `username = ""` means no credentials, not an empty user name
             mqtt.username = mqtt.username.take().filter(|value| !value.is_empty());
             mqtt.password = mqtt.password.take().filter(|value| !value.is_empty());
+            mqtt.client_id = mqtt.client_id.take().filter(|value| !value.is_empty());
+            if mqtt.client_id.is_none() {
+                mqtt.client_id = Some(default_client_id.clone());
+            }
+            if mqtt.device_id.is_none() {
+                mqtt.device_id = config.device_id.clone();
+            }
         }
 
         config.validate()?;
@@ -147,6 +174,14 @@ impl Config {
     }
 }
 
+/// Replaces characters that MQTT brokers may reject in client ids
+fn client_id_safe(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,9 +195,11 @@ mod tests {
         move |name| vars.get(name).cloned()
     }
 
+    /// An output as loaded for inverter_host "hms" without further settings
     fn mqtt(host: &str) -> MqttConfig {
         MqttConfig {
             host: host.to_string(),
+            client_id: Some("hms-mqtt-publish-hms".to_string()),
             ..MqttConfig::default()
         }
     }
@@ -215,6 +252,8 @@ mod tests {
             username: Some("user".to_string()),
             password: Some("pass".to_string()),
             tls: Some(true),
+            client_id: Some("hms-mqtt-publish-192-168-4-182".to_string()),
+            device_id: None,
         };
         assert_eq!(config.inverter_host, "192.168.4.182");
         assert_eq!(config.update_interval, Some(60_500));
@@ -304,6 +343,53 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("has no host"), "{err}");
+    }
+
+    #[test]
+    fn default_client_ids_differ_per_inverter() {
+        let client_id = |inverter: &str| {
+            Config::load(
+                None,
+                env(&[("INVERTER_HOST", inverter), ("MQTT_BROKER_HOST", "broker")]),
+            )
+            .unwrap()
+            .home_assistant
+            .unwrap()
+            .client_id
+            .unwrap()
+        };
+        assert_eq!(client_id("192.168.4.182"), "hms-mqtt-publish-192-168-4-182");
+        assert_ne!(client_id("192.168.4.182"), client_id("192.168.4.183"));
+    }
+
+    #[test]
+    fn device_id_applies_to_all_outputs_and_client_id() {
+        let toml = "inverter_host = \"hms\"\ndevice_id = \"roof\"\n[home_assistant]\nhost = \"b\"\n[simple_mqtt]\nhost = \"b\"\n";
+        let config = Config::load(Some(toml), env(&[])).unwrap();
+        for mqtt in [config.home_assistant.unwrap(), config.simple_mqtt.unwrap()] {
+            assert_eq!(mqtt.device_id.as_deref(), Some("roof"));
+            assert_eq!(mqtt.client_id.as_deref(), Some("hms-mqtt-publish-roof"));
+        }
+
+        let config = Config::load(
+            Some(toml),
+            env(&[("DEVICE_ID", "garage"), ("MQTT_CLIENT_ID", "custom")]),
+        )
+        .unwrap();
+        let ha = config.home_assistant.unwrap();
+        assert_eq!(ha.device_id.as_deref(), Some("garage"));
+        assert_eq!(ha.client_id.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn device_id_per_output_takes_precedence() {
+        let toml = "inverter_host = \"hms\"\ndevice_id = \"roof\"\n[simple_mqtt]\nhost = \"b\"\ndevice_id = \"hms800wt2\"\nclient_id = \"old-client\"\n";
+        let sm = Config::load(Some(toml), env(&[]))
+            .unwrap()
+            .simple_mqtt
+            .unwrap();
+        assert_eq!(sm.device_id.as_deref(), Some("hms800wt2"));
+        assert_eq!(sm.client_id.as_deref(), Some("old-client"));
     }
 
     #[test]

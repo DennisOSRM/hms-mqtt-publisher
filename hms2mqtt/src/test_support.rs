@@ -42,6 +42,8 @@ pub fn test_config() -> MqttConfig {
         username: None,
         password: None,
         tls: None,
+        client_id: None,
+        device_id: None,
     }
 }
 
