@@ -19,12 +19,29 @@ The latest release is directly deployable via a docker image from [DockerHub](ht
  - arm/v7,
  - and arm64.
 
-The parameters to access the inverter and MQTT instance are pulled from environment variables:
-- `$INVERTER_HOST`
-- `$MQTT_BROKER_HOST`
-- `$MQTT_USERNAME` (optional)
-- `$MQTT_PASSWORD` (optional)
-- `$MQTT_PORT` (optional)
+The container is configured with environment variables (see [Configuration](#configuration)), e.g.
+
+```
+docker run -e INVERTER_HOST=192.168.4.182 -e MQTT_BROKER_HOST=192.168.1.10 dennisosrm/hms-mqtt-publisher
+```
+
+Alternatively, mount a `config.toml` to `/config/config.toml`.
+
+### Configuration
+
+Settings are read from `config.toml` in the current directory (or next to the executable) and can be set or overridden by environment variables, for every kind of deployment:
+
+| Variable           | `config.toml` setting                 | Notes                                             |
+|--------------------|---------------------------------------|---------------------------------------------------|
+| `INVERTER_HOST`    | `inverter_host`                       | required                                          |
+| `UPDATE_INTERVAL`  | `update_interval`                     | milliseconds, minimum and default 30500           |
+| `MQTT_BROKER_HOST` | `host` of the MQTT outputs            | required unless set in `config.toml`              |
+| `MQTT_PORT`        | `port`                                | optional, default 1883 (8883 with TLS)            |
+| `MQTT_USERNAME`    | `username`                            | optional                                          |
+| `MQTT_PASSWORD`    | `password`                            | optional                                          |
+| `MQTT_TLS`         | `tls`                                 | optional, `true` or `false`                       |
+
+Environment variables take precedence over `config.toml`. The `MQTT_*` variables apply to the MQTT outputs configured in `config.toml` (`[home_assistant]`, `[simple_mqtt]`); without any, they enable both. Empty variables count as not set.
 
 ### Ansible (systemd)
 

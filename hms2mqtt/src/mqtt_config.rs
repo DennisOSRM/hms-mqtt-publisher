@@ -1,6 +1,6 @@
 use serde_derive::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct MqttConfig {
     pub host: String,
     pub port: Option<u16>,

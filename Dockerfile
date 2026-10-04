@@ -39,6 +39,7 @@ FROM debian:bullseye-slim
 # Copy the installed application from the build image to the smaller image.
 COPY --from=builder /usr/local/cargo/bin/hms-mqtt-publish /usr/local/bin/hms-mqtt-publish
 
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Configured by environment variables (see README) and/or a config.toml mounted at /config/config.toml
+WORKDIR /config
 
-ENTRYPOINT [ "bin/sh",  "/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT [ "/usr/local/bin/hms-mqtt-publish" ]
