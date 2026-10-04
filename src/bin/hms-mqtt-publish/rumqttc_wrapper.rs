@@ -91,7 +91,11 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         let use_tls = config.tls.is_some_and(|tls| tls);
 
         let mut mqttoptions = MqttOptions::new(
-            "hms800wt2-mqtt-publisher".to_string() + suffix,
+            // configured client ids are final; the suffix only keeps the fallback distinct
+            config
+                .client_id
+                .clone()
+                .unwrap_or_else(|| format!("hms-mqtt-publish{suffix}")),
             &config.host,
             broker_port(config),
         );
@@ -137,6 +141,8 @@ mod tests {
             username: None,
             password: None,
             tls,
+            client_id: None,
+            device_id: None,
         }
     }
 

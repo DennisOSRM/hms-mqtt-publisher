@@ -12,12 +12,20 @@ use std::time::{Duration, UNIX_EPOCH};
 
 pub struct SimpleMqtt<MQTT: MqttWrapper> {
     client: MQTT,
+    topic_prefix: String,
 }
 
 impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
         let client = MQTT::new(config, "-sm");
-        Self { client }
+        let topic_prefix = config
+            .device_id
+            .clone()
+            .unwrap_or_else(|| "hms800wt2".to_string());
+        Self {
+            client,
+            topic_prefix,
+        }
     }
 }
 
@@ -32,17 +40,15 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
         let pv_current_power = hms_state.pv_current_power as f32 / 10.;
         let pv_daily_yield = hms_state.pv_daily_yield;
 
+        let prefix = &self.topic_prefix;
         let mut topic_payload_pairs = vec![
+            (format!("{prefix}/inverter_local_time"), inverter_local_time),
             (
-                "hms800wt2/inverter_local_time".to_string(),
-                inverter_local_time,
-            ),
-            (
-                "hms800wt2/pv_current_power".to_string(),
+                format!("{prefix}/pv_current_power"),
                 pv_current_power.to_string(),
             ),
             (
-                "hms800wt2/pv_daily_yield".to_string(),
+                format!("{prefix}/pv_daily_yield"),
                 pv_daily_yield.to_string(),
             ),
         ];
@@ -82,7 +88,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
                     ("pv_inv_warning_count", inverter.warning_count.to_string()),
                     ("pv_inv_mi_signal", inverter.mi_signal.to_string()),
                 ]
-                .map(|(name, payload)| (format!("hms800wt2/{name}"), payload)),
+                .map(|(name, payload)| (format!("{prefix}/{name}"), payload)),
             );
         } else {
             warn!("response contains no inverter state");
@@ -100,7 +106,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
                     ("daily_yield", (port.pv_daily_yield as f32).to_string()),
                     ("code", port.code.to_string()),
                 ]
-                .map(|(name, payload)| (format!("hms800wt2/pv_port{n}_{name}"), payload)),
+                .map(|(name, payload)| (format!("{prefix}/pv_port{n}_{name}"), payload)),
             );
         }
 
@@ -169,6 +175,23 @@ mod tests {
         assert_eq!(value("hms800wt2/pv_inv_power_factor"), "0.999");
         assert_eq!(value("hms800wt2/pv_inv_power_limit"), "100");
         assert_eq!(value("hms800wt2/pv_port2_curr"), "9.04");
+    }
+
+    #[test]
+    fn device_id_replaces_the_topic_prefix() {
+        let mut config = test_config();
+        config.device_id = Some("roof".to_string());
+        let mut sm = SimpleMqtt::<RecordingMqtt>::new(&config);
+        sm.publish(&response("414312345678", 1, 2));
+        let topics: Vec<&str> = sm
+            .client
+            .published
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect();
+        assert!(topics.contains(&"roof/pv_current_power"));
+        assert!(topics.contains(&"roof/pv_port2_power"));
+        assert!(topics.iter().all(|t| t.starts_with("roof/")));
     }
 
     #[test]
