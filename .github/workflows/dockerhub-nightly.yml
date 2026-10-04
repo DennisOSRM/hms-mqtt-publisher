@@ -2,7 +2,8 @@ name: Publish multi platform nightly Docker image
 
 on:
   push:
-    branches: ["*"]
+    # release PR branches don't need nightly images
+    branches: ["*", "!release-plz-*"]
   pull_request:
     branches: ["*"]
   workflow_dispatch:
