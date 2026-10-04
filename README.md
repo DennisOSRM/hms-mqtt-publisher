@@ -53,7 +53,7 @@ Each instance connects with its own MQTT client id, derived from the device id o
 
 ### S-Miles cloud
 
-The inverter only uploads to the S-Miles cloud when it is not queried more often than about once a minute. To keep the cloud up to date, set `update_interval = 60500` (or `UPDATE_INTERVAL=60500`), as the Home Assistant add-on does by default.
+Querying the inverter can make it skip uploads to the S-Miles cloud: it uploads about once a minute and skips an upload when it was queried shortly before. Setting `update_interval = 60500` (or `UPDATE_INTERVAL=60500`), as the Home Assistant add-on does by default, lets most uploads through, but depending on the timing some can still be missed.
 
 ### Ansible (systemd)
 

@@ -54,11 +54,6 @@ password = "$MQTT_PASSWORD"
 port = $MQTT_PORT
 EOF
 
-# Distinct device ids keep the Home Assistant entities of several inverters apart
-if bashio::config.has_value 'device_id'; then
-    export DEVICE_ID="$(bashio::config 'device_id')"
-fi
-
 # if DEBUG_LOGGING is true, set the RUST_LOG=debug environment variable to enable debug logging
 if [[ "$DEBUG_LOGGING" == "true" ]]; then
     export RUST_LOG=debug
