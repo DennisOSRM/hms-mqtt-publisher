@@ -40,9 +40,10 @@ jobs:
           echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
           echo "GIT_HASH=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           if [ "${{ inputs.nightly }}" = "true" ]; then
-            # Docker Hub repository names cannot contain '/', e.g. from branch names like fix/foo
+            # Docker Hub repository names must be lowercase and cannot contain '/' (e.g. fix/foo)
             ref="${{ github.ref_name }}"
-            echo "IMAGE=${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY_NIGHTLY }}-${ref//\//-}" >> "$GITHUB_ENV"
+            ref=$(echo "${ref//\//-}" | tr '[:upper:]' '[:lower:]')
+            echo "IMAGE=${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY_NIGHTLY }}-${ref}" >> "$GITHUB_ENV"
           else
             echo "IMAGE=${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY }}" >> "$GITHUB_ENV"
           fi
@@ -117,7 +118,8 @@ jobs:
           echo "date=$(date +'%Y%m%d')" >> "$GITHUB_OUTPUT"
           if [ "${{ inputs.nightly }}" = "true" ]; then
             ref="${{ github.ref_name }}"
-            echo "IMAGE=${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY_NIGHTLY }}-${ref//\//-}" >> "$GITHUB_ENV"
+            ref=$(echo "${ref//\//-}" | tr '[:upper:]' '[:lower:]')
+            echo "IMAGE=${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY_NIGHTLY }}-${ref}" >> "$GITHUB_ENV"
           else
             echo "IMAGE=${{ secrets.DOCKER_HUB_NAMESPACE }}/${{ secrets.DOCKER_HUB_REPOSITORY }}" >> "$GITHUB_ENV"
           fi
