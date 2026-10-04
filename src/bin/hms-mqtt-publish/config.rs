@@ -125,10 +125,6 @@ impl Config {
         }
 
         config.device_id = config.device_id.take().filter(|id| !id.trim().is_empty());
-        let default_client_id = format!(
-            "hms-mqtt-publish-{}",
-            client_id_part(config.device_id.as_deref().unwrap_or(&config.inverter_host))
-        );
         for mqtt in [&mut config.home_assistant, &mut config.simple_mqtt]
             .into_iter()
             .flatten()
@@ -137,11 +133,17 @@ impl Config {
             mqtt.username = mqtt.username.take().filter(|value| !value.is_empty());
             mqtt.password = mqtt.password.take().filter(|value| !value.is_empty());
             mqtt.client_id = mqtt.client_id.take().filter(|value| !value.is_empty());
+            mqtt.device_id = mqtt
+                .device_id
+                .take()
+                .filter(|id| !id.trim().is_empty())
+                .or_else(|| config.device_id.clone());
+            // derived from the output's effective device id, so each inverter gets its own
             if mqtt.client_id.is_none() {
-                mqtt.client_id = Some(default_client_id.clone());
-            }
-            if mqtt.device_id.is_none() {
-                mqtt.device_id = config.device_id.clone();
+                mqtt.client_id = Some(format!(
+                    "hms-mqtt-publish-{}",
+                    client_id_part(mqtt.device_id.as_deref().unwrap_or(&config.inverter_host))
+                ));
             }
         }
 
@@ -462,6 +464,16 @@ mod tests {
             ]),
         )
         .is_ok());
+    }
+
+    #[test]
+    fn client_id_follows_the_device_id_of_its_output() {
+        let toml = "inverter_host = \"hms\"\n[simple_mqtt]\nhost = \"b\"\ndevice_id = \"roof\"\n";
+        let sm = Config::load(Some(toml), env(&[]))
+            .unwrap()
+            .simple_mqtt
+            .unwrap();
+        assert_eq!(sm.client_id.as_deref(), Some("hms-mqtt-publish-roof"));
     }
 
     #[test]
