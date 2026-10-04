@@ -7,23 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/DennisOSRM/hms-mqtt-publisher/compare/v0.4...v0.5.0) - 2026-10-04
+
 ### Added
 
-- TLS support for MQTT connections ([#93](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/93))
+- Support multiple inverters on one broker: an optional device id names each inverter in topics and Home Assistant entities, and every instance gets its own MQTT client id ([#150](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/150))
+- Configure the publisher from environment variables for every deployment, merged with an optional `config.toml` ([#149](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/149))
 - Publish AC current, reactive power, power factor, power limit, warning count, signal strength and per-port status codes ([#141](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/141))
+- TLS support for MQTT connections ([#93](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/93))
 - Hint on the Ansible role / systemd deployment ([#118](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/118))
 
 ### Fixed
 
 - Correct field mapping of the inverter reply; skip stale readings when the DTU reports no inverter link ([#141](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/141))
 - No more panics on short or malformed replies, single-port inverters or short serial numbers; replies are validated (length, command, sequence number, CRC) ([#141](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/141))
+- Invalid configuration from unset Docker variables, empty MQTT credentials and slow container shutdown ([#149](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/149))
 - Docker image reads its configuration from environment variables ([#70](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/70))
 - Compilation fix ([#103](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/103))
 
 ### Changed
 
-- Updated dependencies ([#99](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/99), [#102](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/102), [#132](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/132), [#136](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/136)) and Home Assistant add-ons ([#121](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/121))
-- Dependabot keeps crates, GitHub Actions and Docker base images up to date ([#142](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/142))
+- The default MQTT client ids are now `hms-mqtt-publish-<device id or inverter host>-ha` / `-sm` instead of `hms800wt2-mqtt-publisher-ha` / `-sm`; this only matters for brokers with client id based ACLs ([#150](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/150))
+- The Docker image starts the publisher directly; a `config.toml` can be mounted at `/config/config.toml` ([#149](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/149))
+- Updated dependencies, including toml 1.1 and rumqttc 0.25 ([#99](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/99), [#102](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/102), [#132](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/132), [#136](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/136), [#145](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/145), [#146](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/146)), and the Home Assistant add-ons ([#121](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/121))
+- Docker images are built on native ARM runners ([#143](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/143)); Dependabot keeps crates, GitHub Actions and Docker base images up to date ([#142](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/142), [#148](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/148))
 
 ## [0.4] - 2024-01-27
 
