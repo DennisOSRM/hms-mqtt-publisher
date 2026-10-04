@@ -15,6 +15,7 @@ serde = { version = "1.0.217", features = ["derive"] }
 serde_derive = "1.0.217"
 toml = "1.1.6"
 rustls-native-certs = "0.8.1"
+ctrlc = { version = "3.5.2", features = ["termination"] }
 
 [package.metadata.cargo-machete]
 ignored = ["serde"]
