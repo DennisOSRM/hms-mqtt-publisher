@@ -47,7 +47,7 @@ Environment variables take precedence over `config.toml`. The `MQTT_*` variables
 
 ### Multiple inverters
 
-Run one instance per inverter and give each a distinct `DEVICE_ID` (or `device_id` in `config.toml`), for example the last digits of its serial number. The device id names the inverter in the Home Assistant entities (`hms_<device id>`) and replaces the `hms800wt2` prefix of the simple MQTT topics. Without it, Home Assistant uses the first 8 characters of the DTU serial number, which are the model and production week and can be the same for several inverters. Leave it unset for a single inverter to keep the existing entity ids.
+Run one instance per inverter and give each a distinct `DEVICE_ID` (or `device_id` in `config.toml`), for example the last digits of its serial number. It may contain letters, digits, `_` and `-`. The device id names the inverter in the Home Assistant entities (`hms_<device id>`) and replaces the `hms800wt2` prefix of the simple MQTT topics. Without it, Home Assistant uses the first 8 characters of the DTU serial number, which are the model and production week and can be the same for several inverters. Leave it unset for a single inverter to keep the existing entity ids.
 
 Each instance connects with its own MQTT client id, derived from the device id or the inverter host, so the instances don't disconnect each other.
 

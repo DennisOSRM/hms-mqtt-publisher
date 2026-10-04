@@ -69,6 +69,12 @@ impl Config {
         }
         if let Some(device_id) = var("DEVICE_ID") {
             info!("DEVICE_ID overrides device_id");
+            for mqtt in [&mut config.home_assistant, &mut config.simple_mqtt]
+                .into_iter()
+                .flatten()
+            {
+                mqtt.device_id = Some(device_id.clone());
+            }
             config.device_id = Some(device_id);
         }
 
@@ -121,7 +127,7 @@ impl Config {
         config.device_id = config.device_id.take().filter(|id| !id.trim().is_empty());
         let default_client_id = format!(
             "hms-mqtt-publish-{}",
-            client_id_safe(config.device_id.as_deref().unwrap_or(&config.inverter_host))
+            client_id_part(config.device_id.as_deref().unwrap_or(&config.inverter_host))
         );
         for mqtt in [&mut config.home_assistant, &mut config.simple_mqtt]
             .into_iter()
@@ -161,6 +167,13 @@ impl Config {
             ("home_assistant", &self.home_assistant),
             ("simple_mqtt", &self.simple_mqtt),
         ] {
+            if let Some(id) = mqtt.as_ref().and_then(|mqtt| mqtt.device_id.as_deref()) {
+                if !is_valid_device_id(id) {
+                    return Err(format!(
+                        "invalid device_id '{id}' for [{name}]: use only letters, digits, '_' and '-'"
+                    ));
+                }
+            }
             if mqtt
                 .as_ref()
                 .is_some_and(|mqtt| mqtt.host.trim().is_empty())
@@ -174,12 +187,36 @@ impl Config {
     }
 }
 
-/// Replaces characters that MQTT brokers may reject in client ids
-fn client_id_safe(value: &str) -> String {
-    value
+/// Characters allowed in device ids: they become MQTT topic levels and Home Assistant ids
+fn is_valid_device_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Makes `value` usable in an MQTT client id. Characters that brokers may reject are replaced,
+/// and a hash of the original value is appended in that case, so that e.g. `inverter.one` and
+/// `inverter-one` still get different client ids.
+fn client_id_part(value: &str) -> String {
+    let safe: String = value
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if safe == value {
+        return safe;
+    }
+    // FNV-1a: stable across runs and platforms, unlike std's DefaultHasher
+    let hash = value.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    });
+    format!("{safe}-{hash:08x}")
 }
 
 #[cfg(test)]
@@ -252,7 +289,7 @@ mod tests {
             username: Some("user".to_string()),
             password: Some("pass".to_string()),
             tls: Some(true),
-            client_id: Some("hms-mqtt-publish-192-168-4-182".to_string()),
+            client_id: Some("hms-mqtt-publish-192-168-4-182-d5013b7d".to_string()),
             device_id: None,
         };
         assert_eq!(config.inverter_host, "192.168.4.182");
@@ -358,8 +395,14 @@ mod tests {
             .client_id
             .unwrap()
         };
-        assert_eq!(client_id("192.168.4.182"), "hms-mqtt-publish-192-168-4-182");
+        assert_eq!(
+            client_id("192.168.4.182"),
+            "hms-mqtt-publish-192-168-4-182-d5013b7d"
+        );
         assert_ne!(client_id("192.168.4.182"), client_id("192.168.4.183"));
+        // replacing characters must not make different hosts equal
+        assert_ne!(client_id("inverter.one"), client_id("inverter-one"));
+        assert_eq!(client_id("inverter-one"), "hms-mqtt-publish-inverter-one");
     }
 
     #[test]
@@ -379,6 +422,46 @@ mod tests {
         let ha = config.home_assistant.unwrap();
         assert_eq!(ha.device_id.as_deref(), Some("garage"));
         assert_eq!(ha.client_id.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn device_id_from_environment_overrides_per_output_values() {
+        let toml =
+            "inverter_host = \"hms\"\n[simple_mqtt]\nhost = \"b\"\ndevice_id = \"hms800wt2\"\n";
+        let config = Config::load(Some(toml), env(&[("DEVICE_ID", "garage")])).unwrap();
+        assert_eq!(
+            config.simple_mqtt.unwrap().device_id.as_deref(),
+            Some("garage")
+        );
+    }
+
+    #[test]
+    fn device_ids_must_be_usable_in_topics() {
+        for id in ["a/b", "a+b", "a#b", "a b", "a\0b", "dach.süd"] {
+            let err = Config::load(
+                None,
+                env(&[
+                    ("INVERTER_HOST", "hms"),
+                    ("MQTT_BROKER_HOST", "broker"),
+                    ("DEVICE_ID", id),
+                ]),
+            )
+            .unwrap_err();
+            assert!(err.contains("invalid device_id"), "{id}: {err}");
+        }
+        let toml = "inverter_host = \"hms\"\n[simple_mqtt]\nhost = \"b\"\ndevice_id = \"x/y\"\n";
+        assert!(Config::load(Some(toml), env(&[]))
+            .unwrap_err()
+            .contains("[simple_mqtt]"));
+        assert!(Config::load(
+            None,
+            env(&[
+                ("INVERTER_HOST", "hms"),
+                ("MQTT_BROKER_HOST", "broker"),
+                ("DEVICE_ID", "Roof_2-a"),
+            ]),
+        )
+        .is_ok());
     }
 
     #[test]
