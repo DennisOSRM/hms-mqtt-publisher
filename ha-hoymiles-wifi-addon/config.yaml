@@ -1,6 +1,6 @@
 ---
 name: Hoymiles HMS Wifi Addon
-version: 'v0.5'
+version: 'v0.6'
 slug: ha-hoymiles-wifi-addon
 description: Publishes telemetry information from Hoymiles HMS-XXXXW-T2 micro-inverters to your home assistant MQTT broker
 url: https://github.com/DennisOSRM/hms-mqtt-publisher/tree/master/ha-hoymiles-wifi-addon
@@ -19,6 +19,7 @@ options:                          # Default options value for the add-on.
   mqtt_password: ''
   mqtt_port: 1883
   update_interval: 60500
+  device_id: ''
   debug_logging: false
 schema:                            # Schema validation for the options.
   inverter_host: str
@@ -27,4 +28,5 @@ schema:                            # Schema validation for the options.
   mqtt_password: str?
   mqtt_port: int
   update_interval: int
+  device_id: str?
   debug_logging: bool

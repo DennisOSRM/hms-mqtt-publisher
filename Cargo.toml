@@ -2,6 +2,17 @@
 name = "hms-mqtt-publish"
 version = "0.5.0"
 edition = "2021"
+# Not part of the published binary: changes here don't start a release (release-plz)
+exclude = [
+    ".devcontainer",
+    ".github",
+    ".vscode",
+    "docs",
+    "ha-hoymiles-wifi-addon",
+    "ha-hoymiles-wifi-addon-nightly",
+    "release-plz.toml",
+    "repository.json",
+]
 
 [workspace]
 
