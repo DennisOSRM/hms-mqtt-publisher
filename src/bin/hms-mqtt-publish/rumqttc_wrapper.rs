@@ -91,12 +91,11 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         let use_tls = config.tls.is_some_and(|tls| tls);
 
         let mut mqttoptions = MqttOptions::new(
+            // configured client ids are final; the suffix only keeps the fallback distinct
             config
                 .client_id
-                .as_deref()
-                .unwrap_or("hms-mqtt-publish")
-                .to_string()
-                + suffix,
+                .clone()
+                .unwrap_or_else(|| format!("hms-mqtt-publish{suffix}")),
             &config.host,
             broker_port(config),
         );

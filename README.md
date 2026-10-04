@@ -40,7 +40,7 @@ Settings are read from `config.toml` in the current directory (or next to the ex
 | `MQTT_USERNAME`    | `username`                            | optional                                          |
 | `MQTT_PASSWORD`    | `password`                            | optional                                          |
 | `MQTT_TLS`         | `tls`                                 | optional, `true` or `false`                       |
-| `MQTT_CLIENT_ID`   | `client_id`                           | optional, default derived from the device id or inverter host |
+| `MQTT_CLIENT_ID`   | `client_id`                           | optional, used as is; with both outputs enabled `-ha` and `-sm` are appended. Default derived from the device id or inverter host |
 | `DEVICE_ID`        | `device_id`                           | optional, see [Multiple inverters](#multiple-inverters) |
 
 Environment variables take precedence over `config.toml`. The `MQTT_*` variables apply to the MQTT outputs configured in `config.toml` (`[home_assistant]`, `[simple_mqtt]`); without any, they enable both. Empty variables count as not set.
