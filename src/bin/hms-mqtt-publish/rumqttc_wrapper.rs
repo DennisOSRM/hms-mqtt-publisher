@@ -33,6 +33,22 @@ fn broker_port(config: &MqttConfig) -> u16 {
     })
 }
 
+/// TLS settings that trust the root certificates of the operating system.
+fn tls_client_config() -> ClientConfig {
+    // Use rustls-native-certs to load root certificates from the operating system.
+    let mut roots = tokio_rustls::rustls::RootCertStore::empty();
+    rustls_native_certs::load_native_certs()
+        .expect("could not load platform certs")
+        .into_iter()
+        .for_each(|cert| {
+            roots.add(cert).unwrap();
+        });
+
+    ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+}
+
 impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
     fn subscribe(&mut self, topic: &str, qos: mqtt_wrapper::QoS) -> anyhow::Result<()> {
         Ok(self.client.subscribe(topic, match_qos(qos))?)
@@ -81,20 +97,7 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         );
         mqttoptions.set_keep_alive(Duration::from_secs(5));
         if use_tls {
-            // Use rustls-native-certs to load root certificates from the operating system.
-            let mut roots = tokio_rustls::rustls::RootCertStore::empty();
-            rustls_native_certs::load_native_certs()
-                .expect("could not load platform certs")
-                .into_iter()
-                .for_each(|cert| {
-                    roots.add(cert).unwrap();
-                });
-
-            let client_config = ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-
-            mqttoptions.set_transport(Transport::tls_with_config(client_config.into()));
+            mqttoptions.set_transport(Transport::tls_with_config(tls_client_config().into()));
         }
 
         //parse the mqtt authentication options
@@ -143,6 +146,14 @@ mod tests {
         assert_eq!(broker_port(&config(None, Some(false))), 1883);
         assert_eq!(broker_port(&config(None, Some(true))), 8883);
         assert_eq!(broker_port(&config(Some(1234), Some(true))), 1234);
+    }
+
+    #[test]
+    fn tls_config_builds_with_the_compiled_crypto_provider() {
+        // rustls >= 0.23 picks its crypto provider at runtime and panics here
+        // if none or more than one is compiled in
+        let config = tls_client_config();
+        assert!(config.alpn_protocols.is_empty());
     }
 
     #[test]
