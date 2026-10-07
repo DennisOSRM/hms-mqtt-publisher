@@ -33,6 +33,38 @@ message InverterState {
   int32 bit_field = 20;       // not in the app schema; low byte freezes together with stale data
 }
 
+// Field numbers follow the three-phase inverter message (TGSMO) of the S-Miles Installer app.
+// Scaling is assumed to match InverterState.
+message ThreePhaseInverterState {
+  int64 inv_id = 1;
+  int32 version = 2;
+  int32 voltage_a = 3;        // phase voltages [V], factor 0.1
+  int32 voltage_b = 4;
+  int32 voltage_c = 5;
+  int32 voltage_ab = 6;       // line voltages [V], factor 0.1
+  int32 voltage_bc = 7;
+  int32 voltage_ca = 8;
+  int32 grid_freq = 9;        // [Hz], factor 0.01
+  int32 power = 10;           // [W], factor 0.1
+  int32 reactive_power = 11;  // [var], factor 0.1
+  int32 current_a = 12;       // phase currents [A], factor 0.01
+  int32 current_b = 13;
+  int32 current_c = 14;
+  int32 power_factor = 15;    // factor 0.001
+  int32 temperature = 16;     // [C], factor 0.1
+  int32 warning_count = 17;
+  int32 crc = 18;
+  int32 link = 19;            // >0: last DTU read of this inverter succeeded; 0: values are stale
+  int32 mi_signal = 20;
+  int32 coa_s = 21;
+  int32 power_limit = 22;     // [%], factor 0.1
+  int32 lim_p = 23;
+  int32 lim_q = 24;
+  int32 limr_pf = 25;
+  uint64 route_info = 26;
+  int32 current_l = 27;
+}
+
 message PortState {
   int64 pv_sn = 1;            // serial number
   int32 pv_port = 2;          // id of the port
@@ -52,6 +84,7 @@ message HMSStateResponse {
   int32 page = 4;               // app name: cp; repeats the requested page
   int32 version = 5;            // app name: ver
   repeated InverterState inverter_state = 9;
+  repeated ThreePhaseInverterState three_phase_inverter_state = 10;
   repeated PortState port_state = 11;
   int32 pv_current_power = 12;  // [W], factor 0.1
   int32 pv_daily_yield = 13;    // [Wh]

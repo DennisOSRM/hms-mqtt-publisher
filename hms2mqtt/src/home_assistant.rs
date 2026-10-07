@@ -138,6 +138,30 @@ impl HMSStateResponse {
             json[format!("inv_{}_warning_count", inverter.port_id)] = inverter.warning_count.into();
             json[format!("inv_{}_mi_signal", inverter.port_id)] = inverter.mi_signal.into();
         }
+        // Three-phase inverters (e.g. HMT series), numbered from 1
+        for (index, inverter) in self.three_phase_inverter_state.iter().enumerate() {
+            let key = |name: &str| format!("inv3_{}_{name}", index + 1);
+            json[key("power")] = format!("{:.2}", inverter.power as f32 * 0.1).into();
+            json[key("grid_freq")] = format!("{:.2}", inverter.grid_freq as f32 * 0.01).into();
+            json[key("temperature")] = format!("{:.2}", inverter.temperature as f32 * 0.1).into();
+            for (phase, voltage, current) in [
+                ("l1", inverter.voltage_a, inverter.current_a),
+                ("l2", inverter.voltage_b, inverter.current_b),
+                ("l3", inverter.voltage_c, inverter.current_c),
+            ] {
+                json[key(&format!("voltage_{phase}"))] =
+                    format!("{:.2}", voltage as f32 * 0.1).into();
+                json[key(&format!("current_{phase}"))] =
+                    format!("{:.2}", current as f32 * 0.01).into();
+            }
+            json[key("reactive_power")] =
+                format!("{:.2}", inverter.reactive_power as f32 * 0.1).into();
+            json[key("power_factor")] =
+                format!("{:.3}", inverter.power_factor as f32 * 0.001).into();
+            json[key("power_limit")] = format!("{:.1}", inverter.power_limit as f32 * 0.1).into();
+            json[key("warning_count")] = inverter.warning_count.into();
+            json[key("mi_signal")] = inverter.mi_signal.into();
+        }
 
         json
     }
@@ -276,6 +300,53 @@ impl HMSStateResponse {
                 ),
             ]);
         }
+        for n in 1..=self.three_phase_inverter_state.len() {
+            let name = |what: &str| format!("Three-Phase Inverter {n} {what}");
+            let key = |what: &str| format!("inv3_{n}_{what}");
+            let (topic, device) = (state_topic, &device_config);
+            sensors.extend([
+                SensorConfig::power(topic, device, &name("Power"), &key("power")),
+                SensorConfig::temperature(topic, device, &name("Temperature"), &key("temperature")),
+                SensorConfig::frequency(topic, device, &name("Grid Frequency"), &key("grid_freq")),
+                SensorConfig::reactive_power(
+                    topic,
+                    device,
+                    &name("Reactive Power"),
+                    &key("reactive_power"),
+                ),
+                SensorConfig::power_factor(
+                    topic,
+                    device,
+                    &name("Power Factor"),
+                    &key("power_factor"),
+                ),
+                SensorConfig::percentage(topic, device, &name("Power Limit"), &key("power_limit")),
+                SensorConfig::diagnostic_value(
+                    topic,
+                    device,
+                    &name("Warning Count"),
+                    &key("warning_count"),
+                ),
+                SensorConfig::diagnostic_value(topic, device, &name("Signal"), &key("mi_signal")),
+            ]);
+            for phase in ["L1", "L2", "L3"] {
+                let lower = phase.to_lowercase();
+                sensors.extend([
+                    SensorConfig::voltage(
+                        topic,
+                        device,
+                        &name(&format!("Grid Voltage {phase}")),
+                        &key(&format!("voltage_{lower}")),
+                    ),
+                    SensorConfig::current(
+                        topic,
+                        device,
+                        &name(&format!("Current {phase}")),
+                        &key(&format!("current_{lower}")),
+                    ),
+                ]);
+            }
+        }
         sensors
     }
 }
@@ -283,6 +354,7 @@ impl HMSStateResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protos::hoymiles::RealData::ThreePhaseInverterState;
     use crate::test_support::{response, test_config, RecordingMqtt};
 
     #[test]
@@ -433,6 +505,41 @@ mod tests {
         };
         let (a, b) = (topics("12345678"), topics("12349999"));
         assert!(a.iter().all(|t| !b.contains(t)));
+    }
+
+    #[test]
+    fn three_phase_inverters_are_published() {
+        let mut r = response("414312345678", 0, 4);
+        let mut inverter = ThreePhaseInverterState::new();
+        inverter.link = 1;
+        inverter.power = 15_000;
+        inverter.voltage_b = 2305;
+        inverter.current_c = 712;
+        inverter.grid_freq = 4998;
+        r.three_phase_inverter_state.push(inverter);
+        let json = r.to_json_payload();
+        assert_eq!(json["inv3_1_power"], "1500.00");
+        assert_eq!(json["inv3_1_voltage_l2"], "230.50");
+        assert_eq!(json["inv3_1_current_l3"], "7.12");
+        assert_eq!(json["inv3_1_grid_freq"], "49.98");
+
+        let configs = r.create_sensor_configs("solar/hms_41431234/state", "41431234");
+        let keys: Vec<String> = configs
+            .iter()
+            .map(|c| serde_json::to_value(c).unwrap()["value_template"].to_string())
+            .collect();
+        for key in ["inv3_1_power", "inv3_1_voltage_l1", "inv3_1_current_l3"] {
+            assert!(keys.iter().any(|k| k.contains(key)), "{key}");
+        }
+        // every discovered sensor reads a key that exists in the payload
+        for config in configs {
+            let config = serde_json::to_value(&config).unwrap();
+            let template = config["value_template"].as_str().unwrap();
+            let key = template
+                .trim_start_matches("{{ value_json.")
+                .trim_end_matches(" }}");
+            assert!(!json[key].is_null(), "missing {key}");
+        }
     }
 
     #[test]
