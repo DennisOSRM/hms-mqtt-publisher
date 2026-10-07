@@ -89,3 +89,31 @@ message HMSStateResponse {
   int32 pv_current_power = 12;  // [W], factor 0.1
   int32 pv_daily_yield = 13;    // [Wh]
 }
+// Request for the warnings (0xA304, WarnResDTO in the S-Miles Installer app)
+message WarningsRequest {
+  string ymd_hms = 1;           // local time, "YYYY-MM-DD HH:MM:SS"
+  int32 page = 2;               // app name: package_now
+  int32 err_code = 3;
+  int32 offset = 4;             // local time zone offset in seconds
+  int32 time = 5;               // epoch
+}
+
+message Warning {
+  int64 inv_id = 1;             // serial number of the inverter
+  int32 code = 2;
+  int32 count = 3;              // app name: num
+  int32 start_time = 4;         // epoch
+  int32 end_time = 5;           // epoch, 0 while the warning is active
+  int32 data1 = 6;
+  int32 data2 = 7;
+}
+
+// Reply to WarningsRequest (0xA204, WarnReqDTO in the S-Miles Installer app)
+message WarningsResponse {
+  string dtu_sn = 1;
+  int32 time = 2;
+  int32 page_count = 3;         // app name: package_nub
+  int32 page = 4;               // app name: package_now
+  int32 warn_device = 5;
+  repeated Warning warnings = 6;
+}

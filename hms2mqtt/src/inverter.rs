@@ -1,4 +1,6 @@
-use crate::protos::hoymiles::RealData::{HMSStateResponse, RealDataResDTO};
+use crate::protos::hoymiles::RealData::{
+    HMSStateResponse, RealDataResDTO, Warning, WarningsRequest, WarningsResponse,
+};
 use crc16::{State, MODBUS};
 use log::{debug, error, info, warn};
 use protobuf::Message;
@@ -94,14 +96,52 @@ impl<'a> Inverter<'a> {
 
     /// One request/reply exchange for page `page` of the real-time data (0xA311).
     fn request_page(&mut self, page: i32) -> Result<HMSStateResponse, String> {
-        self.sequence = self.sequence.wrapping_add(1);
-
         let now = Local::now();
         let mut request = RealDataResDTO::new();
         request.ymd_hms = now.format("%Y-%m-%d %H:%M:%S").to_string();
         request.time = now.timestamp() as i32;
         request.offset = now.offset().local_minus_utc();
         request.cp = page;
+        let payload = self.exchange(REAL_DATA_REQUEST, &request)?;
+        HMSStateResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())
+    }
+
+    /// Fetches the warnings the DTU reports (0xA304). Every request counts towards the
+    /// DTU's rate limit, so this should be called rarely, right after a reading.
+    pub fn fetch_warnings(&mut self) -> Option<Vec<Warning>> {
+        let mut warnings = Vec::new();
+        let mut page = 0;
+        loop {
+            let now = Local::now();
+            let mut request = WarningsRequest::new();
+            request.ymd_hms = now.format("%Y-%m-%d %H:%M:%S").to_string();
+            request.time = now.timestamp() as i32;
+            request.offset = now.offset().local_minus_utc();
+            request.page = page;
+            let response = match self
+                .exchange(WARNINGS_REQUEST, &request)
+                .and_then(|payload| {
+                    WarningsResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())
+                }) {
+                Ok(response) => response,
+                Err(e) => {
+                    debug!("could not fetch warnings: {e}");
+                    return None;
+                }
+            };
+            warnings.extend(response.warnings);
+            page += 1;
+            if page >= response.page_count.clamp(1, MAX_PAGES) {
+                return Some(warnings);
+            }
+            thread::sleep(self.page_delay);
+        }
+    }
+
+    /// Sends `request` with command `cmd` and returns the payload of the reply.
+    fn exchange(&mut self, cmd: u16, request: &impl Message) -> Result<Vec<u8>, String> {
+        self.sequence = self.sequence.wrapping_add(1);
+
         let request_as_bytes = request.write_to_bytes().expect("serialize to bytes");
         let crc16 = State::<MODBUS>::calculate(&request_as_bytes);
         let len = request_as_bytes.len() as u16 + HEADER_LEN as u16;
@@ -109,7 +149,7 @@ impl<'a> Inverter<'a> {
         // compose request message
         let mut message = Vec::new();
         message.extend_from_slice(b"HM");
-        message.extend_from_slice(&REAL_DATA_REQUEST.to_be_bytes());
+        message.extend_from_slice(&cmd.to_be_bytes());
         message.extend_from_slice(&self.sequence.to_be_bytes());
         message.extend_from_slice(&crc16.to_be_bytes());
         message.extend_from_slice(&len.to_be_bytes());
@@ -135,13 +175,14 @@ impl<'a> Inverter<'a> {
         }
         stream.write_all(&message).map_err(|e| e.to_string())?;
 
-        let payload = read_frame(&mut stream, self.sequence)?;
-        HMSStateResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())
+        read_frame(&mut stream, self.sequence)
     }
 }
 
 /// Real-time data request, answered with 0xA211 (RealDataNew in the S-Miles Installer app)
 const REAL_DATA_REQUEST: u16 = 0xa311;
+/// Warnings request, answered with 0xA204 (WarnData in the S-Miles Installer app)
+const WARNINGS_REQUEST: u16 = 0xa304;
 /// Upper bound for the number of pages requested per reading
 const MAX_PAGES: i32 = 16;
 
@@ -369,6 +410,49 @@ mod tests {
         inverter.page_delay = Duration::ZERO;
         assert!(inverter.update_state().is_none());
         assert_eq!(inverter.state(), NetworkState::Offline);
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn fetch_warnings_requests_all_pages() {
+        let warnings_page = |page: i32| {
+            move |req: &[u8]| {
+                assert_eq!(&req[0..4], b"HM\xa3\x04");
+                let request = WarningsRequest::parse_from_bytes(&req[HEADER_LEN..]).unwrap();
+                assert_eq!(request.page, page);
+                let mut response = WarningsResponse::new();
+                response.page_count = 2;
+                response.page = page;
+                let mut warning = Warning::new();
+                warning.code = 100 + page;
+                response.warnings.push(warning);
+                let payload = response.write_to_bytes().unwrap();
+                let mut f = b"HM\xa2\x04".to_vec();
+                f.extend_from_slice(&req[4..6]);
+                f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
+                f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
+                f.extend_from_slice(&payload);
+                f
+            }
+        };
+        let (port, dtu) = fake_dtu(vec![Box::new(warnings_page(0)), Box::new(warnings_page(1))]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        inverter.page_delay = Duration::ZERO;
+        let codes: Vec<i32> = inverter
+            .fetch_warnings()
+            .expect("warnings")
+            .iter()
+            .map(|w| w.code)
+            .collect();
+        assert_eq!(codes, [100, 101]);
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn fetch_warnings_fails_gracefully() {
+        let (port, dtu) = fake_dtu(vec![Box::new(|_| Vec::new())]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert!(inverter.fetch_warnings().is_none());
         dtu.join().unwrap();
     }
 
