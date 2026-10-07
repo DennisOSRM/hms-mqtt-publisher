@@ -50,6 +50,8 @@ pub struct SensorConfig {
     state_class: Option<String>, // The type/class of the state, e.g. measurement, total_increasing, etc.
     #[serde(skip_serializing_if = "Option::is_none")]
     entity_category: Option<String>, // e.g. diagnostic
+    #[serde(skip_serializing_if = "Option::is_none")]
+    availability_topic: Option<String>, // "online" / "offline", unavailable when offline
 }
 
 impl SensorConfig {
@@ -74,7 +76,14 @@ impl SensorConfig {
             device: device_config.clone(),
             state_class,
             entity_category: None,
+            availability_topic: None,
         }
+    }
+
+    /// Shows the sensor as unavailable while `topic` reads "offline"
+    pub fn with_availability(mut self, topic: Option<&str>) -> Self {
+        self.availability_topic = topic.map(str::to_string);
+        self
     }
 
     fn diagnostic(mut self) -> Self {
@@ -272,6 +281,8 @@ pub struct NumberConfig {
     unit_of_measurement: String,
     mode: String,
     entity_category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    availability_topic: Option<String>,
 }
 
 impl NumberConfig {
@@ -299,6 +310,13 @@ impl NumberConfig {
             unit_of_measurement: "%".to_string(),
             mode: "box".to_string(),
             entity_category: "config".to_string(),
+            availability_topic: None,
         }
+    }
+
+    /// Shows the number as unavailable while `topic` reads "offline"
+    pub fn with_availability(mut self, topic: Option<&str>) -> Self {
+        self.availability_topic = topic.map(str::to_string);
+        self
     }
 }

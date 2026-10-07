@@ -18,11 +18,18 @@ pub struct SimpleMqtt<MQTT: MqttWrapper> {
 
 impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
-        let client = MQTT::new(config, "-sm");
         let topic_prefix = config
             .device_id
             .clone()
             .unwrap_or_else(|| "hms800wt2".to_string());
+        // "online" / "offline" of this publisher, the latter as last will
+        let client = MQTT::new(
+            &MqttConfig {
+                availability_topic: Some(format!("{topic_prefix}/availability")),
+                ..config.clone()
+            },
+            "-sm",
+        );
         let mut simple_mqtt = Self {
             client,
             topic_prefix,
@@ -324,6 +331,22 @@ mod tests {
         assert!(topics.contains(&"roof/pv_current_power"));
         assert!(topics.contains(&"roof/pv_port2_power"));
         assert!(topics.iter().all(|t| t.starts_with("roof/")));
+    }
+
+    #[test]
+    fn availability_topic_follows_the_prefix() {
+        let sm = SimpleMqtt::<RecordingMqtt>::new(&test_config());
+        assert_eq!(
+            sm.client.availability_topic.as_deref(),
+            Some("hms800wt2/availability")
+        );
+        let mut config = test_config();
+        config.device_id = Some("roof".to_string());
+        let sm = SimpleMqtt::<RecordingMqtt>::new(&config);
+        assert_eq!(
+            sm.client.availability_topic.as_deref(),
+            Some("roof/availability")
+        );
     }
 
     #[test]

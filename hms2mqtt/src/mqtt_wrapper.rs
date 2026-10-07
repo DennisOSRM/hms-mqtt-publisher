@@ -1,5 +1,10 @@
 use crate::mqtt_config::MqttConfig;
 
+/// Payload of the availability topic while the publisher is connected
+pub const ONLINE: &str = "online";
+/// Payload of the availability topic once the publisher is gone, sent as its last will
+pub const OFFLINE: &str = "offline";
+
 #[derive(Clone, Copy)]
 pub enum QoS {
     AtMostOnce,
