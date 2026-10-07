@@ -2,7 +2,7 @@ use crate::{
     metric_collector::MetricCollector,
     mqtt_config::MqttConfig,
     mqtt_wrapper::{MqttWrapper, QoS},
-    protos::hoymiles::RealData::HMSStateResponse,
+    protos::hoymiles::RealData::{HMSStateResponse, Warning},
 };
 
 use chrono::prelude::DateTime;
@@ -30,6 +30,36 @@ impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
 }
 
 impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
+    fn publish_warnings(&mut self, _hms_state: &HMSStateResponse, warnings: &[Warning]) {
+        let prefix = &self.topic_prefix;
+        let list: Vec<serde_json::Value> = warnings
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "inverter": w.inv_id,
+                    "code": w.code,
+                    "count": w.count,
+                    "start": w.start_time,
+                    "end": w.end_time,
+                })
+            })
+            .collect();
+        for (topic, payload) in [
+            (
+                format!("{prefix}/warnings_count"),
+                warnings.len().to_string(),
+            ),
+            (
+                format!("{prefix}/warnings"),
+                serde_json::Value::from(list).to_string(),
+            ),
+        ] {
+            if let Err(e) = self.client.publish(topic, QoS::AtMostOnce, true, payload) {
+                warn!("mqtt error: {e:?}")
+            }
+        }
+    }
+
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         debug!("{hms_state}");
 
@@ -50,6 +80,15 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
             (
                 format!("{prefix}/pv_daily_yield"),
                 pv_daily_yield.to_string(),
+            ),
+            (
+                format!("{prefix}/pv_energy_total"),
+                hms_state
+                    .port_state
+                    .iter()
+                    .map(|port| port.pv_energy_total as i64)
+                    .sum::<i64>()
+                    .to_string(),
             ),
         ];
 
@@ -279,6 +318,30 @@ mod tests {
         assert_eq!(value("hms800wt2/pv_grid_freq").as_deref(), Some("50.01"));
         assert_eq!(value("hms800wt2/pv_port4_power").as_deref(), Some("0"));
         assert!(value("hms800wt2/pv_grid_voltage").is_none());
+    }
+
+    #[test]
+    fn total_energy_and_warnings() {
+        let mut r = response("414312345678", 1, 2);
+        r.port_state[0].pv_energy_total = 1000;
+        r.port_state[1].pv_energy_total = 234;
+        let mut sm = SimpleMqtt::<RecordingMqtt>::new(&test_config());
+        sm.publish(&r);
+        let mut warning = Warning::new();
+        warning.code = 141;
+        sm.publish_warnings(&r, &[warning]);
+        let value = |topic: &str| {
+            sm.client
+                .published
+                .iter()
+                .find(|(t, _)| t == topic)
+                .map(|(_, p)| String::from_utf8(p.clone()).unwrap())
+        };
+        assert_eq!(value("hms800wt2/pv_energy_total").as_deref(), Some("1234"));
+        assert_eq!(value("hms800wt2/warnings_count").as_deref(), Some("1"));
+        let list: serde_json::Value =
+            serde_json::from_str(&value("hms800wt2/warnings").unwrap()).unwrap();
+        assert_eq!(list[0]["code"], 141);
     }
 
     #[test]

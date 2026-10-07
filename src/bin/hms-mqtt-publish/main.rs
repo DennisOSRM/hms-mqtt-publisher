@@ -19,6 +19,8 @@ use std::time::Duration;
 use log::{error, info};
 
 static REQUEST_DELAY_DEFAULT: u64 = 30_500;
+/// Warnings are fetched with every n-th successful reading (about every 5 minutes by default)
+const WARNINGS_EVERY_NTH_READING: u64 = 10;
 
 /// The DTU only serves fresh data about every 30 s, so shorter intervals fall back to the default.
 fn update_interval(configured: Option<u64>) -> u64 {
@@ -109,15 +111,29 @@ fn main() {
         output_channels.push(Box::new(SimpleMqtt::<RumqttcWrapper>::new(&config)));
     }
 
+    let mut readings: u64 = 0;
     loop {
+        let mut delay = Duration::from_millis(interval);
         if let Some(r) = inverter.update_state() {
             output_channels.iter_mut().for_each(|channel| {
                 channel.publish(&r);
-            })
+            });
+
+            // warnings rarely change; every request counts towards the DTU's rate limit
+            if readings.is_multiple_of(WARNINGS_EVERY_NTH_READING) {
+                if let Some(warnings) = inverter.fetch_warnings() {
+                    output_channels.iter_mut().for_each(|channel| {
+                        channel.publish_warnings(&r, &warnings);
+                    });
+                }
+                // keep the next reading clear of the DTU's ~30 s window after this request
+                delay += Duration::from_secs(1);
+            }
+            readings += 1;
         }
 
         // TODO: the sleep has to move into the Inverter struct in an async implementation
-        thread::sleep(Duration::from_millis(interval));
+        thread::sleep(delay);
     }
 }
 

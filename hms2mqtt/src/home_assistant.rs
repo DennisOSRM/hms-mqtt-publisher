@@ -1,6 +1,9 @@
 use crate::home_assistant_config::DeviceConfig;
 use crate::mqtt_wrapper::MqttWrapper;
-use crate::{mqtt_config::MqttConfig, protos::hoymiles::RealData::HMSStateResponse};
+use crate::{
+    mqtt_config::MqttConfig,
+    protos::hoymiles::RealData::{HMSStateResponse, Warning},
+};
 
 use crate::home_assistant_config::SensorConfig;
 use crate::metric_collector::MetricCollector;
@@ -49,12 +52,37 @@ impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
     }
 }
 
-impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
-    fn publish(&mut self, hms_state: &HMSStateResponse) {
-        let id = self
-            .device_id
+impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
+    fn id(&self, hms_state: &HMSStateResponse) -> String {
+        self.device_id
             .clone()
-            .unwrap_or_else(|| hms_state.short_dtu_sn());
+            .unwrap_or_else(|| hms_state.short_dtu_sn())
+    }
+}
+
+impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
+    fn publish_warnings(&mut self, hms_state: &HMSStateResponse, warnings: &[Warning]) {
+        let topic = format!("solar/hms_{}/warnings", self.id(hms_state));
+        let list: Vec<serde_json::Value> = warnings
+            .iter()
+            .map(|w| {
+                json!({
+                    "inverter": w.inv_id,
+                    "code": w.code,
+                    "count": w.count,
+                    "start": w.start_time,
+                    "end": w.end_time,
+                })
+            })
+            .collect();
+        self.publish_json(
+            &topic,
+            json!({ "warnings_count": warnings.len(), "warnings": list }),
+        );
+    }
+
+    fn publish(&mut self, hms_state: &HMSStateResponse) {
+        let id = self.id(hms_state);
         let config_topic = format!("homeassistant/sensor/hms_{id}");
         let state_topic = format!("solar/hms_{id}/state");
 
@@ -102,6 +130,7 @@ impl HMSStateResponse {
             "dtu_sn": self.dtu_sn,
             "pv_current_power": format!("{:.2}", self.pv_current_power as f32 * 0.1),
             "pv_daily_yield": self.pv_daily_yield,
+            "pv_energy_total": self.port_state.iter().map(|port| port.pv_energy_total as i64).sum::<i64>(),
             "efficiency": format!("{:.2}", self.get_total_efficiency())
         });
 
@@ -191,6 +220,19 @@ impl HMSStateResponse {
                 "pv_daily_yield",
             ),
             SensorConfig::efficiency(state_topic, &device_config, "Efficiency", "efficiency"),
+            SensorConfig::energy(
+                state_topic,
+                &device_config,
+                "Total Energy",
+                "pv_energy_total",
+            ),
+            // fetched every few minutes and published to its own topic
+            SensorConfig::diagnostic_value(
+                &format!("solar/hms_{id}/warnings"),
+                &device_config,
+                "Warnings",
+                "warnings_count",
+            ),
         ]);
 
         // Sensors for each pv string
@@ -426,6 +468,10 @@ mod tests {
             assert!(!configs.is_empty());
             for config in configs {
                 let config = serde_json::to_value(&config).unwrap();
+                if config["state_topic"] != "solar/hms_41431234/state" {
+                    assert_eq!(config["state_topic"], "solar/hms_41431234/warnings");
+                    continue;
+                }
                 let template = config["value_template"].as_str().unwrap();
                 let key = template
                     .trim_start_matches("{{ value_json.")
@@ -435,7 +481,6 @@ mod tests {
                     "sensor {} reads missing key {key}",
                     config["unique_id"]
                 );
-                assert_eq!(config["state_topic"], "solar/hms_41431234/state");
             }
         }
     }
@@ -531,15 +576,44 @@ mod tests {
         for key in ["inv3_1_power", "inv3_1_voltage_l1", "inv3_1_current_l3"] {
             assert!(keys.iter().any(|k| k.contains(key)), "{key}");
         }
-        // every discovered sensor reads a key that exists in the payload
+        // every discovered sensor of the state topic reads a key that exists in the payload
         for config in configs {
             let config = serde_json::to_value(&config).unwrap();
+            if config["state_topic"] != "solar/hms_41431234/state" {
+                continue;
+            }
             let template = config["value_template"].as_str().unwrap();
             let key = template
                 .trim_start_matches("{{ value_json.")
                 .trim_end_matches(" }}");
             assert!(!json[key].is_null(), "missing {key}");
         }
+    }
+
+    #[test]
+    fn total_energy_is_the_sum_of_the_ports() {
+        let mut r = response("414312345678", 1, 2);
+        r.port_state[0].pv_energy_total = 922_613;
+        r.port_state[1].pv_energy_total = 995_242;
+        assert_eq!(r.to_json_payload()["pv_energy_total"], 1_917_855);
+    }
+
+    #[test]
+    fn warnings_are_published_to_their_own_topic() {
+        let mut ha = HomeAssistant::<RecordingMqtt>::new(&test_config());
+        let mut warning = Warning::new();
+        warning.inv_id = 22069994788405;
+        warning.code = 141;
+        warning.count = 2;
+        warning.start_time = 1_790_000_000;
+        ha.publish_warnings(&response("414312345678", 1, 2), &[warning]);
+        let (topic, payload) = &ha.client.published[0];
+        assert_eq!(topic, "solar/hms_41431234/warnings");
+        let json: serde_json::Value = serde_json::from_slice(payload).unwrap();
+        assert_eq!(json["warnings_count"], 1);
+        assert_eq!(json["warnings"][0]["code"], 141);
+        assert_eq!(json["warnings"][0]["inverter"], 22069994788405_i64);
+        assert_eq!(json["warnings"][0]["end"], 0);
     }
 
     #[test]
