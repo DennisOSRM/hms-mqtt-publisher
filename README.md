@@ -1,9 +1,21 @@
 # hms-mqtt-publisher
 
-This tool fetches the current telemetry information from the HMS-XXXXW-2T series of micro-inverters and publishes the information into an MQTT broker. Please note that it doesn’t implement a DTU, but pulls the information off the internal DTU of these inverters. 
+This tool fetches the current telemetry from Hoymiles HMS-XXXXW-xT micro-inverters with built-in WiFi (and DTUs speaking the same protocol) and publishes it to an MQTT broker. It doesn't implement a DTU, but pulls the information off the DTU of these inverters over the local network.
+
+It supports two output channels: a simple MQTT publisher without a particular schema, and one for [Home Assistant](https://www.home-assistant.io) with MQTT auto discovery.
+
+## What is published
+
+- Total AC power, daily yield and total energy, efficiency
+- Per PV port: voltage, current, power, daily yield, energy total and status code
+- Per inverter: grid voltage and frequency, AC current, reactive power, power factor, temperature, power limit (once one has been set), warning count and signal strength; three-phase inverters with voltage and current per phase
+- The DTU's warnings, fetched about every 5 minutes
+
+Readings the DTU marks as stale are skipped, see [Known limitations](#known-limitations).
 
 ## How to run
-The tool is distributed as source only — for now. You’ll have to download, compile and run it yourself. Please note that configuration of hosts, and passwords is done via `config.toml` from the current directory. It supports two different output channels. One is a simple MQTT publisher that doesn't follow a particular schema, and the other is made for [Home Assistant](https://www.home-assistant.io). It supports auto discovery of devices.
+
+Use the [Docker image](#docker), the [Home Assistant add-on](#home-assistant-add-on), or build it from source:
 
 ```
 $ git clone https://github.com/DennisOSRM/hms-mqtt-publisher.git
@@ -11,6 +23,10 @@ $ cd hms-mqtt-publisher
 $ cargo r
 ```
 ![image](https://github.com/lumapu/ahoy/assets/1067895/32c0b9b6-5aea-41e3-b9f8-161ce82fb99a)
+
+### Home Assistant add-on
+
+Add this repository to the add-on store of Home Assistant (Settings, Add-ons, Add-on store, Repositories) and install "Hoymiles HMS Wifi Addon". A nightly variant built from the main branch is available as well.
 
 ### Docker
 
@@ -64,7 +80,6 @@ role to deploy hms-mqtt-publisher as a systemd service to a remote host. Check t
 Please note: The tool does not come with any guarantees and if by chance you fry your inverter with a funny series of bits, you are on your own. That being said, no inverters have been harmed during development. 
 
 ## Known limitations
-- One can only fetch updates approximately twice per minute. The inverter firmware seems to implement a mandatory wait period of a little more than 30 seconds. If one makes a request within 30 seconds of the previous one, then the inverter will reply with the previous reading and restart the countdown. It will also not send updated values to S-Miles Cloud if this happens. 
-- The tool is a CLI tool and not a background service. 
-- The tools was developed for (and with an) HMS-800W-2T. It may work with the other inverters from the series, but is untested at the time of writing
-
+- Fresh data is available about every 30 seconds. A request within about 30 seconds of the previous one gets the previous reading and restarts the DTU's countdown; after a few such requests the DTU stops reading the inverter for a while. The default interval of 30.5 s stays below that limit, readings marked as stale are skipped, and the publisher pauses for a minute or longer after a stale reading. Other clients polling the same inverter count against the same limit.
+- Developed and tested with an HMS-800W-2T. Other HMS models, DTUs and three-phase inverters use the same protocol but are untested; values of three-phase inverters assume the scaling of single-phase ones.
+- DTUs that encrypt their local traffic (newer firmware) are not supported yet.
