@@ -69,6 +69,9 @@ impl<'a> Inverter<'a> {
             match self.request_page(page) {
                 Ok(next) => {
                     response.inverter_state.extend(next.inverter_state);
+                    response
+                        .three_phase_inverter_state
+                        .extend(next.three_phase_inverter_state);
                     response.port_state.extend(next.port_state);
                 }
                 Err(e) => {
@@ -188,18 +191,25 @@ pub fn read_frame<R: Read>(reader: &mut R, expected_seq: u16) -> Result<Vec<u8>,
     Ok(payload)
 }
 
-/// A reading is stale when no inverter reports a working link to the DTU.
+/// A reading is stale when no inverter (single- or three-phase) reports a working link to the DTU.
 pub fn is_stale(response: &HMSStateResponse) -> bool {
     response
         .inverter_state
         .iter()
-        .all(|inverter| inverter.link == 0)
+        .map(|inverter| inverter.link)
+        .chain(
+            response
+                .three_phase_inverter_state
+                .iter()
+                .map(|inverter| inverter.link),
+        )
+        .all(|link| link == 0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::hoymiles::RealData::{InverterState, PortState};
+    use crate::protos::hoymiles::RealData::{InverterState, PortState, ThreePhaseInverterState};
 
     fn response_with_links(links: &[i32]) -> HMSStateResponse {
         let mut response = HMSStateResponse::new();
@@ -495,6 +505,17 @@ mod tests {
         let mut bad_magic = frame(10, b"");
         bad_magic[0] = b'X';
         assert!(read_frame(&mut bad_magic.as_slice(), SEQ).is_err());
+    }
+
+    #[test]
+    fn linked_three_phase_inverter_is_fresh() {
+        let mut response = response_with_links(&[]);
+        let mut inverter = ThreePhaseInverterState::new();
+        inverter.link = 1;
+        response.three_phase_inverter_state.push(inverter);
+        assert!(!is_stale(&response));
+        response.three_phase_inverter_state[0].link = 0;
+        assert!(is_stale(&response));
     }
 
     #[test]

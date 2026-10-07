@@ -90,6 +90,63 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
                 ]
                 .map(|(name, payload)| (format!("{prefix}/{name}"), payload)),
             );
+        } else if let Some(inverter) = hms_state.three_phase_inverter_state.first() {
+            // three-phase inverters publish the shared values under the same topics as
+            // single-phase ones, plus the voltage and current of each phase
+            topic_payload_pairs.extend(
+                [
+                    (
+                        "pv_grid_freq".to_string(),
+                        (inverter.grid_freq as f32 / 100.).to_string(),
+                    ),
+                    (
+                        "pv_inv_temperature".to_string(),
+                        (inverter.temperature as f32 / 10.).to_string(),
+                    ),
+                    (
+                        "pv_inv_reactive_power".to_string(),
+                        (inverter.reactive_power as f32 / 10.).to_string(),
+                    ),
+                    (
+                        "pv_inv_power_factor".to_string(),
+                        (inverter.power_factor as f32 / 1000.).to_string(),
+                    ),
+                    (
+                        "pv_inv_power_limit".to_string(),
+                        (inverter.power_limit as f32 / 10.).to_string(),
+                    ),
+                    (
+                        "pv_inv_warning_count".to_string(),
+                        inverter.warning_count.to_string(),
+                    ),
+                    (
+                        "pv_inv_mi_signal".to_string(),
+                        inverter.mi_signal.to_string(),
+                    ),
+                ]
+                .into_iter()
+                .chain(
+                    [
+                        ("l1", inverter.voltage_a, inverter.current_a),
+                        ("l2", inverter.voltage_b, inverter.current_b),
+                        ("l3", inverter.voltage_c, inverter.current_c),
+                    ]
+                    .into_iter()
+                    .flat_map(|(phase, voltage, current)| {
+                        [
+                            (
+                                format!("pv_grid_voltage_{phase}"),
+                                (voltage as f32 / 10.).to_string(),
+                            ),
+                            (
+                                format!("pv_inv_ac_current_{phase}"),
+                                (current as f32 / 100.).to_string(),
+                            ),
+                        ]
+                    }),
+                )
+                .map(|(name, payload)| (format!("{prefix}/{name}"), payload)),
+            );
         } else {
             warn!("response contains no inverter state");
         }
@@ -192,6 +249,36 @@ mod tests {
         assert!(topics.contains(&"roof/pv_current_power"));
         assert!(topics.contains(&"roof/pv_port2_power"));
         assert!(topics.iter().all(|t| t.starts_with("roof/")));
+    }
+
+    #[test]
+    fn three_phase_inverter_topics() {
+        let mut r = response("414312345678", 0, 4);
+        let mut inverter = crate::protos::hoymiles::RealData::ThreePhaseInverterState::new();
+        inverter.voltage_c = 2312;
+        inverter.current_a = 512;
+        inverter.grid_freq = 5001;
+        r.three_phase_inverter_state.push(inverter);
+        let mut sm = SimpleMqtt::<RecordingMqtt>::new(&test_config());
+        sm.publish(&r);
+        let value = |topic: &str| {
+            sm.client
+                .published
+                .iter()
+                .find(|(t, _)| t == topic)
+                .map(|(_, p)| String::from_utf8(p.clone()).unwrap())
+        };
+        assert_eq!(
+            value("hms800wt2/pv_grid_voltage_l3").as_deref(),
+            Some("231.2")
+        );
+        assert_eq!(
+            value("hms800wt2/pv_inv_ac_current_l1").as_deref(),
+            Some("5.12")
+        );
+        assert_eq!(value("hms800wt2/pv_grid_freq").as_deref(), Some("50.01"));
+        assert_eq!(value("hms800wt2/pv_port4_power").as_deref(), Some("0"));
+        assert!(value("hms800wt2/pv_grid_voltage").is_none());
     }
 
     #[test]
