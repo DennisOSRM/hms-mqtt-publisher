@@ -127,6 +127,9 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
                     ("pv_inv_warning_count", inverter.warning_count.to_string()),
                     ("pv_inv_mi_signal", inverter.mi_signal.to_string()),
                 ]
+                .into_iter()
+                // the DTU reports 0 until a limit has been set, which isn't a 0 % limit
+                .filter(|(name, _)| *name != "pv_inv_power_limit" || inverter.power_limit > 0)
                 .map(|(name, payload)| (format!("{prefix}/{name}"), payload)),
             );
         } else if let Some(inverter) = hms_state.three_phase_inverter_state.first() {
@@ -184,6 +187,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
                         ]
                     }),
                 )
+                .filter(|(name, _)| name != "pv_inv_power_limit" || inverter.power_limit > 0)
                 .map(|(name, payload)| (format!("{prefix}/{name}"), payload)),
             );
         } else {
@@ -342,6 +346,12 @@ mod tests {
         let list: serde_json::Value =
             serde_json::from_str(&value("hms800wt2/warnings").unwrap()).unwrap();
         assert_eq!(list[0]["code"], 141);
+    }
+
+    #[test]
+    fn unset_power_limit_is_not_published() {
+        let topics = published_topics(1, 2);
+        assert!(!topics.contains(&"hms800wt2/pv_inv_power_limit".to_string()));
     }
 
     #[test]
