@@ -162,8 +162,11 @@ impl HMSStateResponse {
                 format!("{:.2}", inverter.reactive_power as f32 * 0.1).into();
             json[format!("inv_{}_power_factor", inverter.port_id)] =
                 format!("{:.3}", inverter.power_factor as f32 * 0.001).into();
-            json[format!("inv_{}_power_limit", inverter.port_id)] =
-                format!("{:.1}", inverter.power_limit as f32 * 0.1).into();
+            // the DTU reports 0 until a limit has been set, which isn't a 0 % limit
+            if inverter.power_limit > 0 {
+                json[format!("inv_{}_power_limit", inverter.port_id)] =
+                    format!("{:.1}", inverter.power_limit as f32 * 0.1).into();
+            }
             json[format!("inv_{}_warning_count", inverter.port_id)] = inverter.warning_count.into();
             json[format!("inv_{}_mi_signal", inverter.port_id)] = inverter.mi_signal.into();
         }
@@ -187,7 +190,10 @@ impl HMSStateResponse {
                 format!("{:.2}", inverter.reactive_power as f32 * 0.1).into();
             json[key("power_factor")] =
                 format!("{:.3}", inverter.power_factor as f32 * 0.001).into();
-            json[key("power_limit")] = format!("{:.1}", inverter.power_limit as f32 * 0.1).into();
+            if inverter.power_limit > 0 {
+                json[key("power_limit")] =
+                    format!("{:.1}", inverter.power_limit as f32 * 0.1).into();
+            }
             json[key("warning_count")] = inverter.warning_count.into();
             json[key("mi_signal")] = inverter.mi_signal.into();
         }
@@ -279,6 +285,14 @@ impl HMSStateResponse {
         }
         for inverter in &self.inverter_state {
             let idx = inverter.port_id;
+            if inverter.power_limit > 0 {
+                sensors.push(SensorConfig::percentage(
+                    state_topic,
+                    &device_config,
+                    &format!("Inverter {} Power Limit", idx),
+                    &format!("inv_{}_power_limit", idx),
+                ));
+            }
             sensors.extend([
                 SensorConfig::power(
                     state_topic,
@@ -322,12 +336,6 @@ impl HMSStateResponse {
                     &format!("Inverter {} Power Factor", idx),
                     &format!("inv_{}_power_factor", idx),
                 ),
-                SensorConfig::percentage(
-                    state_topic,
-                    &device_config,
-                    &format!("Inverter {} Power Limit", idx),
-                    &format!("inv_{}_power_limit", idx),
-                ),
                 SensorConfig::diagnostic_value(
                     state_topic,
                     &device_config,
@@ -342,10 +350,19 @@ impl HMSStateResponse {
                 ),
             ]);
         }
-        for n in 1..=self.three_phase_inverter_state.len() {
+        for (index, inverter) in self.three_phase_inverter_state.iter().enumerate() {
+            let n = index + 1;
             let name = |what: &str| format!("Three-Phase Inverter {n} {what}");
             let key = |what: &str| format!("inv3_{n}_{what}");
             let (topic, device) = (state_topic, &device_config);
+            if inverter.power_limit > 0 {
+                sensors.push(SensorConfig::percentage(
+                    topic,
+                    device,
+                    &name("Power Limit"),
+                    &key("power_limit"),
+                ));
+            }
             sensors.extend([
                 SensorConfig::power(topic, device, &name("Power"), &key("power")),
                 SensorConfig::temperature(topic, device, &name("Temperature"), &key("temperature")),
@@ -362,7 +379,6 @@ impl HMSStateResponse {
                     &name("Power Factor"),
                     &key("power_factor"),
                 ),
-                SensorConfig::percentage(topic, device, &name("Power Limit"), &key("power_limit")),
                 SensorConfig::diagnostic_value(
                     topic,
                     device,
@@ -447,6 +463,28 @@ mod tests {
         assert_eq!(json["inv_1_power_factor"], "0.999");
         assert_eq!(json["inv_1_power_limit"], "100.0");
         assert_eq!(json["inv_1_warning_count"], 4);
+    }
+
+    #[test]
+    fn unset_power_limit_is_not_published() {
+        let r = response("414312345678", 1, 2);
+        assert!(r.to_json_payload()["inv_1_power_limit"].is_null());
+        let configs = r.create_sensor_configs("solar/hms_41431234/state", "41431234");
+        assert!(configs
+            .iter()
+            .all(|c| !serde_json::to_value(c).unwrap()["value_template"]
+                .as_str()
+                .unwrap()
+                .contains("power_limit")));
+        // a limit set through the app is published, sensor included
+        let s = sample();
+        let configs = s.create_sensor_configs("solar/hms_41431234/state", "41431234");
+        assert!(configs
+            .iter()
+            .any(|c| serde_json::to_value(c).unwrap()["value_template"]
+                .as_str()
+                .unwrap()
+                .contains("inv_1_power_limit")));
     }
 
     #[test]
