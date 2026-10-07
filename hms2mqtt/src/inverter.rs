@@ -26,6 +26,7 @@ pub struct Inverter<'a> {
     state: NetworkState,
     sequence: u16,
     page_delay: Duration,
+    last_reading_stale: bool,
 }
 
 impl<'a> Inverter<'a> {
@@ -40,11 +41,18 @@ impl<'a> Inverter<'a> {
             state: NetworkState::Unknown,
             sequence: 0_u16,
             page_delay: Duration::from_secs(1),
+            last_reading_stale: false,
         }
     }
 
     pub fn state(&self) -> NetworkState {
         self.state
+    }
+
+    /// Whether the DTU answered the last request with stale data, i.e. it currently doesn't
+    /// read the inverter, typically after being polled too often.
+    pub fn last_reading_stale(&self) -> bool {
+        self.last_reading_stale
     }
 
     fn set_state(&mut self, new_state: NetworkState) {
@@ -56,6 +64,7 @@ impl<'a> Inverter<'a> {
 
     /// Fetches the real-time data, requesting further pages if the DTU splits its reply.
     pub fn update_state(&mut self) -> Option<HMSStateResponse> {
+        self.last_reading_stale = false;
         let mut response = match self.request_page(0) {
             Ok(response) => response,
             Err(e) => {
@@ -88,6 +97,7 @@ impl<'a> Inverter<'a> {
             // The DTU answered, but its last read of the inverter(s) failed; the values
             // are a repeat of the previous reading and must not be published as fresh.
             warn!("DTU reports no inverter link (link == 0), skipping stale reading");
+            self.last_reading_stale = true;
             return None;
         }
         self.set_state(NetworkState::Online);
@@ -463,6 +473,7 @@ mod tests {
         let mut inverter = Inverter::with_port("127.0.0.1", port);
         assert!(inverter.update_state().is_none());
         assert_ne!(inverter.state(), NetworkState::Online);
+        assert!(inverter.last_reading_stale());
         dtu.join().unwrap();
     }
 

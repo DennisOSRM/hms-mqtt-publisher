@@ -19,6 +19,21 @@ use std::time::Duration;
 use log::{error, info};
 
 static REQUEST_DELAY_DEFAULT: u64 = 30_500;
+/// Pause after a stale reading, doubled for each further stale one up to STALE_BACKOFF_MAX.
+/// Polling again within ~30 s restarts the DTU's lockout; about a minute without requests
+/// let it recover in measurements.
+const STALE_BACKOFF: Duration = Duration::from_secs(60);
+const STALE_BACKOFF_MAX: Duration = Duration::from_secs(600);
+
+/// Time to wait before the next reading
+fn next_delay(interval: Duration, consecutive_stale: u32) -> Duration {
+    if consecutive_stale == 0 {
+        return interval;
+    }
+    let backoff = STALE_BACKOFF.saturating_mul(1 << (consecutive_stale - 1).min(10));
+    backoff.min(STALE_BACKOFF_MAX).max(interval)
+}
+
 /// Warnings are fetched with every n-th successful reading (about every 5 minutes by default)
 const WARNINGS_EVERY_NTH_READING: u64 = 10;
 
@@ -112,9 +127,22 @@ fn main() {
     }
 
     let mut readings: u64 = 0;
+    let mut consecutive_stale: u32 = 0;
     loop {
-        let mut delay = Duration::from_millis(interval);
-        if let Some(r) = inverter.update_state() {
+        let reading = inverter.update_state();
+        if inverter.last_reading_stale() {
+            consecutive_stale += 1;
+        } else {
+            consecutive_stale = 0;
+        }
+        let mut delay = next_delay(Duration::from_millis(interval), consecutive_stale);
+        if consecutive_stale > 0 {
+            info!(
+                "DTU served stale data, waiting {}s before the next request",
+                delay.as_secs()
+            );
+        }
+        if let Some(r) = reading {
             output_channels.iter_mut().for_each(|channel| {
                 channel.publish(&r);
             });
@@ -140,6 +168,20 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_readings_back_off_exponentially() {
+        let interval = Duration::from_millis(REQUEST_DELAY_DEFAULT);
+        assert_eq!(next_delay(interval, 0), interval);
+        assert_eq!(next_delay(interval, 1), Duration::from_secs(60));
+        assert_eq!(next_delay(interval, 2), Duration::from_secs(120));
+        assert_eq!(next_delay(interval, 4), Duration::from_secs(480));
+        assert_eq!(next_delay(interval, 5), STALE_BACKOFF_MAX);
+        assert_eq!(next_delay(interval, 40), STALE_BACKOFF_MAX);
+        // a configured interval longer than the back-off wins
+        let long = Duration::from_secs(900);
+        assert_eq!(next_delay(long, 1), long);
+    }
 
     #[test]
     fn intervals_below_the_dtu_limit_use_the_default() {
