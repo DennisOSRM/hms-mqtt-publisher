@@ -6,6 +6,7 @@ mod logging;
 mod rumqttc_wrapper;
 
 use config::Config;
+use hms2mqtt::command::Command;
 use hms2mqtt::home_assistant::HomeAssistant;
 use hms2mqtt::inverter::Inverter;
 use hms2mqtt::metric_collector::MetricCollector;
@@ -129,6 +130,20 @@ fn main() {
     let mut readings: u64 = 0;
     let mut consecutive_stale: u32 = 0;
     loop {
+        // a command takes the place of this cycle's reading, so that the DTU doesn't get more
+        // requests than its rate limit allows
+        let commands: Vec<Command> = output_channels
+            .iter_mut()
+            .flat_map(|channel| channel.commands())
+            .collect();
+        if let Some(Command::SetPowerLimit(percent)) = commands.last() {
+            if let Err(e) = inverter.set_power_limit(*percent) {
+                error!("could not set the power limit: {e}");
+            }
+            thread::sleep(Duration::from_millis(interval));
+            continue;
+        }
+
         let reading = inverter.update_state();
         if inverter.last_reading_stale() {
             consecutive_stale += 1;

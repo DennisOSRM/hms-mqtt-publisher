@@ -254,3 +254,51 @@ impl SensorConfig {
         .diagnostic()
     }
 }
+
+/// Home Assistant MQTT number entity, used for settings that can be changed
+///
+/// https://www.home-assistant.io/integrations/number.mqtt/
+#[derive(Serialize)]
+pub struct NumberConfig {
+    pub unique_id: String,
+    name: String,
+    command_topic: String,
+    state_topic: String,
+    value_template: String,
+    device: DeviceConfig,
+    min: u32,
+    max: u32,
+    step: u32,
+    unit_of_measurement: String,
+    mode: String,
+    entity_category: String,
+}
+
+impl NumberConfig {
+    /// Power limit in percent; `key` is the state payload field with the current limit
+    pub fn power_limit(
+        state_topic: &str,
+        command_topic: &str,
+        device_config: &DeviceConfig,
+        key: &str,
+        range: std::ops::RangeInclusive<u32>,
+    ) -> Self {
+        NumberConfig {
+            unique_id: format!("{}_power_limit_set", device_config.identifiers[0]),
+            name: "Power Limit".to_string(),
+            command_topic: command_topic.to_string(),
+            state_topic: state_topic.to_string(),
+            // the limit is only in the payload once one has been set
+            value_template: format!(
+                "{{% if value_json.{key} is defined %}}{{{{ value_json.{key} }}}}{{% endif %}}"
+            ),
+            device: device_config.clone(),
+            min: *range.start(),
+            max: *range.end(),
+            step: 1,
+            unit_of_measurement: "%".to_string(),
+            mode: "box".to_string(),
+            entity_category: "config".to_string(),
+        }
+    }
+}

@@ -13,6 +13,10 @@ It supports two output channels: a simple MQTT publisher without a particular sc
 
 Readings the DTU marks as stale are skipped, see [Known limitations](#known-limitations).
 
+## Power limit
+
+The active power limit of the inverters can be set in percent (2 to 100) of their rated power: in Home Assistant with the "Power Limit" number entity, or by publishing the percentage to `solar/hms_<device id>/power_limit/set` (Home Assistant output) or `hms800wt2/power_limit/set` (simple MQTT output, or `<device id>/power_limit/set`). The command takes the place of the next reading, so it is applied within one update interval. The limit applies to all inverters of the DTU.
+
 ## How to run
 
 Use the [Docker image](#docker), the [Home Assistant add-on](#home-assistant-add-on), or build it from source:

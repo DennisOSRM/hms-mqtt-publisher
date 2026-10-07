@@ -1,4 +1,8 @@
-use std::{thread, time::Duration};
+use std::{
+    sync::{mpsc, Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use hms2mqtt::{
     mqtt_config::MqttConfig,
@@ -7,13 +11,15 @@ use hms2mqtt::{
 use log::warn;
 use rumqttc::{
     tokio_rustls::{self, rustls::ClientConfig},
-    Client, MqttOptions,
-    QoS::AtMostOnce,
-    Transport,
+    Client, Event, MqttOptions, Packet, Transport,
 };
 
 pub struct RumqttcWrapper {
     client: Client,
+    /// messages on subscribed topics, forwarded by the event loop thread
+    incoming: mpsc::Receiver<(String, Vec<u8>)>,
+    /// renewed after every (re)connect, as the broker may not keep them
+    subscriptions: Arc<Mutex<Vec<(String, rumqttc::QoS)>>>,
 }
 
 fn match_qos(qos: mqtt_wrapper::QoS) -> rumqttc::QoS {
@@ -51,7 +57,15 @@ fn tls_client_config() -> ClientConfig {
 
 impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
     fn subscribe(&mut self, topic: &str, qos: mqtt_wrapper::QoS) -> anyhow::Result<()> {
+        self.subscriptions
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), match_qos(qos)));
         Ok(self.client.subscribe(topic, match_qos(qos))?)
+    }
+
+    fn receive(&mut self) -> Vec<(String, Vec<u8>)> {
+        self.incoming.try_iter().collect()
     }
 
     fn publish<S, V>(
@@ -116,17 +130,35 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
 
         let (client, mut connection) = Client::new(mqttoptions, 512);
 
+        let (sender, incoming) = mpsc::channel();
+        let subscriptions: Arc<Mutex<Vec<(String, rumqttc::QoS)>>> = Arc::default();
+        let (event_client, event_subscriptions) = (client.clone(), subscriptions.clone());
         thread::spawn(move || {
             // keep polling the event loop to make sure outgoing messages get sent
             // the call to .iter() blocks and suspends the thread effectively by
             // calling .recv() under the hood. This implies that the loop terminates
             // once the client unsubs
-            for _ in connection.iter() {}
+            for event in connection.iter() {
+                match event {
+                    Ok(Event::Incoming(Packet::Publish(publish))) => {
+                        let _ = sender.send((publish.topic.clone(), publish.payload.to_vec()));
+                    }
+                    Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                        for (topic, qos) in event_subscriptions.lock().unwrap().iter() {
+                            if let Err(e) = event_client.try_subscribe(topic.clone(), *qos) {
+                                warn!("could not renew subscription to {topic}: {e}");
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
         });
-        if let Err(e) = client.subscribe("hms800wt2", AtMostOnce) {
-            warn!("subscription to base topic failed: {e}");
+        Self {
+            client,
+            incoming,
+            subscriptions,
         }
-        Self { client }
     }
 }
 

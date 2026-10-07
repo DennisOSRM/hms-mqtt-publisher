@@ -5,14 +5,17 @@ use crate::{
     protos::hoymiles::RealData::{HMSStateResponse, Warning},
 };
 
-use crate::home_assistant_config::SensorConfig;
+use crate::command::{parse_power_limit, Command, POWER_LIMIT_RANGE};
+use crate::home_assistant_config::{NumberConfig, SensorConfig};
 use crate::metric_collector::MetricCollector;
-use log::{debug, error};
+use log::{debug, error, warn};
 use serde_json::json;
 
 pub struct HomeAssistant<MQTT: MqttWrapper> {
     client: MQTT,
     device_id: Option<String>,
+    /// command topic subscribed to, once the device id is known
+    command_topic: Option<String>,
 }
 
 impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
@@ -21,6 +24,7 @@ impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
         Self {
             client,
             device_id: config.device_id.clone(),
+            command_topic: None,
         }
     }
 
@@ -81,14 +85,47 @@ impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
         );
     }
 
+    fn commands(&mut self) -> Vec<Command> {
+        let Some(command_topic) = self.command_topic.clone() else {
+            return Vec::new();
+        };
+        self.client
+            .receive()
+            .into_iter()
+            .filter(|(topic, _)| *topic == command_topic)
+            .filter_map(|(_, payload)| match parse_power_limit(&payload) {
+                Ok(command) => Some(command),
+                Err(e) => {
+                    warn!("ignoring command on {command_topic}: {e}");
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn publish(&mut self, hms_state: &HMSStateResponse) {
         let id = self.id(hms_state);
+        let command_topic = format!("solar/hms_{id}/power_limit/set");
+        if self.command_topic.as_ref() != Some(&command_topic) {
+            match self
+                .client
+                .subscribe(&command_topic, crate::mqtt_wrapper::QoS::AtLeastOnce)
+            {
+                Ok(()) => self.command_topic = Some(command_topic.clone()),
+                Err(e) => error!("could not subscribe to {command_topic}: {e:?}"),
+            }
+        }
         let config_topic = format!("homeassistant/sensor/hms_{id}");
         let state_topic = format!("solar/hms_{id}/state");
 
         let device_config = hms_state.create_sensor_configs(&state_topic, &id);
 
         self.publish_configs(&config_topic, &device_config);
+        if let Some(number) = hms_state.create_power_limit_config(&state_topic, &command_topic, &id)
+        {
+            let topic = format!("homeassistant/number/hms_{id}/{}/config", number.unique_id);
+            self.publish_json(&topic, serde_json::to_value(number).unwrap());
+        }
         self.publish_states(hms_state, &state_topic);
     }
 }
@@ -199,6 +236,35 @@ impl HMSStateResponse {
         }
 
         json
+    }
+
+    /// Number entity to set the power limit of all inverters, showing the current limit of the
+    /// first inverter
+    fn create_power_limit_config(
+        &self,
+        state_topic: &str,
+        command_topic: &str,
+        id: &str,
+    ) -> Option<NumberConfig> {
+        let key = if let Some(inverter) = self.inverter_state.first() {
+            format!("inv_{}_power_limit", inverter.port_id)
+        } else if !self.three_phase_inverter_state.is_empty() {
+            "inv3_1_power_limit".to_string()
+        } else {
+            return None;
+        };
+        let device_config = DeviceConfig::new(
+            self.get_name(id),
+            self.get_model(),
+            Vec::from([format!("hms_{id}")]),
+        );
+        Some(NumberConfig::power_limit(
+            state_topic,
+            command_topic,
+            &device_config,
+            &key,
+            POWER_LIMIT_RANGE,
+        ))
     }
 
     fn create_sensor_configs(&self, state_topic: &str, id: &str) -> Vec<SensorConfig> {
@@ -555,10 +621,9 @@ mod tests {
             .map(|(t, _)| t.as_str())
             .collect();
         assert!(topics.contains(&"solar/hms_roof/state"));
-        assert!(topics
-            .iter()
-            .all(|t| !t.starts_with("homeassistant/")
-                || t.starts_with("homeassistant/sensor/hms_roof/")));
+        assert!(topics.iter().all(|t| !t.starts_with("homeassistant/")
+            || t.starts_with("homeassistant/sensor/hms_roof/")
+            || t.starts_with("homeassistant/number/hms_roof/")));
         let (_, payload) = ha
             .client
             .published
@@ -652,6 +717,63 @@ mod tests {
         assert_eq!(json["warnings"][0]["code"], 141);
         assert_eq!(json["warnings"][0]["inverter"], 22069994788405_i64);
         assert_eq!(json["warnings"][0]["end"], 0);
+    }
+
+    #[test]
+    fn power_limit_number_entity_and_commands() {
+        let mut ha = HomeAssistant::<RecordingMqtt>::new(&test_config());
+        assert!(ha.commands().is_empty());
+        ha.publish(&response("414312345678", 1, 2));
+        assert_eq!(ha.client.subscribed, ["solar/hms_41431234/power_limit/set"]);
+
+        let (_, payload) = ha
+            .client
+            .published
+            .iter()
+            .find(|(t, _)| t.starts_with("homeassistant/number/hms_41431234/"))
+            .expect("number entity");
+        let number: serde_json::Value = serde_json::from_slice(payload).unwrap();
+        assert_eq!(
+            number["command_topic"],
+            "solar/hms_41431234/power_limit/set"
+        );
+        assert_eq!(number["state_topic"], "solar/hms_41431234/state");
+        assert_eq!(
+            (number["min"].as_u64(), number["max"].as_u64()),
+            (Some(2), Some(100))
+        );
+        assert!(number["value_template"]
+            .as_str()
+            .unwrap()
+            .contains("inv_1_power_limit"));
+
+        // a second reading doesn't subscribe again
+        ha.publish(&response("414312345678", 1, 2));
+        assert_eq!(ha.client.subscribed.len(), 1);
+
+        ha.client.incoming = vec![
+            (
+                "solar/hms_41431234/power_limit/set".to_string(),
+                b"60".to_vec(),
+            ),
+            (
+                "solar/hms_41431234/power_limit/set".to_string(),
+                b"500".to_vec(),
+            ),
+            ("other/topic".to_string(), b"30".to_vec()),
+        ];
+        assert_eq!(ha.commands(), [Command::SetPowerLimit(60)]);
+    }
+
+    #[test]
+    fn no_power_limit_entity_without_inverter() {
+        let mut ha = HomeAssistant::<RecordingMqtt>::new(&test_config());
+        ha.publish(&response("414312345678", 0, 2));
+        assert!(ha
+            .client
+            .published
+            .iter()
+            .all(|(t, _)| !t.starts_with("homeassistant/number/")));
     }
 
     #[test]

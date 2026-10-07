@@ -23,4 +23,9 @@ pub trait MqttWrapper {
         V: Clone + Into<Vec<u8>>;
 
     fn new(config: &MqttConfig, suffix: &str) -> Self;
+
+    /// Messages received on subscribed topics since the last call, as (topic, payload)
+    fn receive(&mut self) -> Vec<(String, Vec<u8>)> {
+        Vec::new()
+    }
 }

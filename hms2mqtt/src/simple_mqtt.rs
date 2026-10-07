@@ -1,4 +1,5 @@
 use crate::{
+    command::{parse_power_limit, Command},
     metric_collector::MetricCollector,
     mqtt_config::MqttConfig,
     mqtt_wrapper::{MqttWrapper, QoS},
@@ -22,14 +23,45 @@ impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
             .device_id
             .clone()
             .unwrap_or_else(|| "hms800wt2".to_string());
-        Self {
+        let mut simple_mqtt = Self {
             client,
             topic_prefix,
+        };
+        let command_topic = simple_mqtt.command_topic();
+        if let Err(e) = simple_mqtt
+            .client
+            .subscribe(&command_topic, QoS::AtLeastOnce)
+        {
+            warn!("could not subscribe to {command_topic}: {e:?}");
         }
+        simple_mqtt
+    }
+}
+
+impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
+    /// Topic to set the power limit in percent, e.g. `hms800wt2/power_limit/set`
+    fn command_topic(&self) -> String {
+        format!("{}/power_limit/set", self.topic_prefix)
     }
 }
 
 impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
+    fn commands(&mut self) -> Vec<Command> {
+        let command_topic = self.command_topic();
+        self.client
+            .receive()
+            .into_iter()
+            .filter(|(topic, _)| *topic == command_topic)
+            .filter_map(|(_, payload)| match parse_power_limit(&payload) {
+                Ok(command) => Some(command),
+                Err(e) => {
+                    warn!("ignoring command on {command_topic}: {e}");
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn publish_warnings(&mut self, _hms_state: &HMSStateResponse, warnings: &[Warning]) {
         let prefix = &self.topic_prefix;
         let list: Vec<serde_json::Value> = warnings
@@ -352,6 +384,19 @@ mod tests {
     fn unset_power_limit_is_not_published() {
         let topics = published_topics(1, 2);
         assert!(!topics.contains(&"hms800wt2/pv_inv_power_limit".to_string()));
+    }
+
+    #[test]
+    fn power_limit_commands() {
+        let mut config = test_config();
+        config.device_id = Some("roof".to_string());
+        let mut sm = SimpleMqtt::<RecordingMqtt>::new(&config);
+        assert_eq!(sm.client.subscribed, ["roof/power_limit/set"]);
+        sm.client.incoming = vec![
+            ("roof/power_limit/set".to_string(), b"40.4".to_vec()),
+            ("roof/power_limit/set".to_string(), b"abc".to_vec()),
+        ];
+        assert_eq!(sm.commands(), [Command::SetPowerLimit(40)]);
     }
 
     #[test]

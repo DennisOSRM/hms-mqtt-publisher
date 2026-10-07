@@ -1,4 +1,5 @@
 // externally visible interfaces
+pub mod command;
 pub mod home_assistant;
 pub mod inverter;
 pub mod metric_collector;
