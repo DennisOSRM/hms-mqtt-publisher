@@ -117,3 +117,24 @@ message WarningsResponse {
   int32 warn_device = 5;
   repeated Warning warnings = 6;
 }
+
+// Control command (0xA305, CommandResDTO in the S-Miles Installer app)
+message CommandRequest {
+  int32 time = 1;               // epoch
+  int32 action = 2;             // e.g. 8: power limit
+  int32 dev_kind = 3;           // 0: the DTU and all its inverters
+  int32 package_nub = 4;
+  int32 package_now = 5;
+  int64 tid = 6;                // transaction id, the app uses the epoch
+  bytes data = 7;               // action parameters, ASCII
+}
+
+// Reply to CommandRequest (0xA205, CommandReqDTO in the S-Miles Installer app)
+message CommandResponse {
+  string dtu_sn = 1;
+  int32 time = 2;
+  int32 action = 3;
+  int32 package_now = 4;
+  int32 err_code = 5;           // 0: accepted
+  int64 tid = 6;
+}

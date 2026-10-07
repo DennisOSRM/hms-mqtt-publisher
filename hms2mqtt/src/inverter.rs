@@ -1,5 +1,6 @@
 use crate::protos::hoymiles::RealData::{
-    HMSStateResponse, RealDataResDTO, Warning, WarningsRequest, WarningsResponse,
+    CommandRequest, CommandResponse, HMSStateResponse, RealDataResDTO, Warning, WarningsRequest,
+    WarningsResponse,
 };
 use crc16::{State, MODBUS};
 use log::{debug, error, info, warn};
@@ -148,6 +149,30 @@ impl<'a> Inverter<'a> {
         }
     }
 
+    /// Sets the active power limit of all inverters of the DTU, in percent of their rated
+    /// power (command action 8, as the vendor app sends it).
+    pub fn set_power_limit(&mut self, percent: u32) -> Result<(), String> {
+        let now = Local::now().timestamp();
+        let mut request = CommandRequest::new();
+        request.time = now as i32;
+        request.action = ACTION_POWER_LIMIT;
+        request.dev_kind = 0;
+        request.package_nub = 1;
+        request.tid = now;
+        // tenths of a percent for phase A; B and C are only used by three-phase setups
+        request.data = format!("A:{},B:0,C:0\r", percent * 10).into_bytes();
+        let payload = self.exchange(COMMAND_REQUEST, &request)?;
+        let response = CommandResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())?;
+        if response.err_code != 0 {
+            return Err(format!(
+                "DTU rejected the power limit (error {})",
+                response.err_code
+            ));
+        }
+        info!("power limit set to {percent} %");
+        Ok(())
+    }
+
     /// Sends `request` with command `cmd` and returns the payload of the reply.
     fn exchange(&mut self, cmd: u16, request: &impl Message) -> Result<Vec<u8>, String> {
         self.sequence = self.sequence.wrapping_add(1);
@@ -193,6 +218,9 @@ impl<'a> Inverter<'a> {
 const REAL_DATA_REQUEST: u16 = 0xa311;
 /// Warnings request, answered with 0xA204 (WarnData in the S-Miles Installer app)
 const WARNINGS_REQUEST: u16 = 0xa304;
+/// Control command, answered with 0xA205 (CommandPB in the S-Miles Installer app)
+const COMMAND_REQUEST: u16 = 0xa305;
+const ACTION_POWER_LIMIT: i32 = 8;
 /// Upper bound for the number of pages requested per reading
 const MAX_PAGES: i32 = 16;
 
@@ -464,6 +492,43 @@ mod tests {
         let mut inverter = Inverter::with_port("127.0.0.1", port);
         assert!(inverter.fetch_warnings().is_none());
         dtu.join().unwrap();
+    }
+
+    /// A DTU reply to a command request with the given error code
+    fn command_reply(req: &[u8], err_code: i32) -> Vec<u8> {
+        let mut response = CommandResponse::new();
+        response.err_code = err_code;
+        response.action = 8;
+        let payload = response.write_to_bytes().unwrap();
+        let mut f = b"HM\xa2\x05".to_vec();
+        f.extend_from_slice(&req[4..6]);
+        f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
+        f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
+        f.extend_from_slice(&payload);
+        f
+    }
+
+    #[test]
+    fn set_power_limit_sends_the_command_of_the_vendor_app() {
+        let (port, dtu) = fake_dtu(vec![
+            Box::new(|req| command_reply(req, 0)),
+            Box::new(|req| command_reply(req, 1)),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert_eq!(inverter.set_power_limit(55), Ok(()));
+        assert!(inverter
+            .set_power_limit(55)
+            .unwrap_err()
+            .contains("rejected"));
+
+        let requests = dtu.join().unwrap();
+        assert_eq!(&requests[0][0..4], b"HM\xa3\x05");
+        let command = CommandRequest::parse_from_bytes(&requests[0][HEADER_LEN..]).unwrap();
+        assert_eq!(command.action, 8);
+        assert_eq!(command.dev_kind, 0);
+        assert_eq!(command.package_nub, 1);
+        assert_eq!(command.data, b"A:550,B:0,C:0\r");
+        assert_eq!(command.tid, command.time as i64);
     }
 
     #[test]

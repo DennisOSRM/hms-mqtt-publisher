@@ -6,11 +6,19 @@ use crate::protos::hoymiles::RealData::{HMSStateResponse, InverterState, PortSta
 /// MQTT client that records published topics instead of sending them.
 pub struct RecordingMqtt {
     pub published: Vec<(String, Vec<u8>)>,
+    pub subscribed: Vec<String>,
+    /// messages handed out by the next receive()
+    pub incoming: Vec<(String, Vec<u8>)>,
 }
 
 impl MqttWrapper for RecordingMqtt {
-    fn subscribe(&mut self, _topic: &str, _qos: QoS) -> anyhow::Result<()> {
+    fn subscribe(&mut self, topic: &str, _qos: QoS) -> anyhow::Result<()> {
+        self.subscribed.push(topic.to_string());
         Ok(())
+    }
+
+    fn receive(&mut self) -> Vec<(String, Vec<u8>)> {
+        std::mem::take(&mut self.incoming)
     }
 
     fn publish<S, V>(
@@ -31,6 +39,8 @@ impl MqttWrapper for RecordingMqtt {
     fn new(_config: &MqttConfig, _suffix: &str) -> Self {
         Self {
             published: Vec::new(),
+            subscribed: Vec::new(),
+            incoming: Vec::new(),
         }
     }
 }
