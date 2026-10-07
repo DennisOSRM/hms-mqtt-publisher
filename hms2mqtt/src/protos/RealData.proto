@@ -1,11 +1,12 @@
 syntax = "proto3";
 
+// Request for real-time data (0xA311, RealResDTO in the S-Miles Installer app)
 message RealDataResDTO {
-  string ymd_hms = 1;
-  int32 cp = 2;
+  string ymd_hms = 1;           // local time, "YYYY-MM-DD HH:MM:SS"
+  int32 cp = 2;                 // requested page, starting at 0
   int32 err_code = 3;
-  int32 offset = 4;
-  int32 time = 5;
+  int32 offset = 4;             // local time zone offset in seconds
+  int32 time = 5;               // epoch
 }
 
 // Field numbers follow the single-phase inverter message (SGSMO) of the S-Miles Installer app.
@@ -47,9 +48,9 @@ message PortState {
 message HMSStateResponse {
   string dtu_sn = 1;             // serial
   int32 time = 2;               // epoch
-  int32 device_nub = 3;
-  int32 pv_nub = 4;             // repeats cp field from request
-  int32 package_nub = 5;
+  int32 page_count = 3;         // app name: ap; replies with many devices span several pages
+  int32 page = 4;               // app name: cp; repeats the requested page
+  int32 version = 5;            // app name: ver
   repeated InverterState inverter_state = 9;
   repeated PortState port_state = 11;
   int32 pv_current_power = 12;  // [W], factor 0.1

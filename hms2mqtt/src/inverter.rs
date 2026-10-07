@@ -4,7 +4,10 @@ use log::{debug, error, info, warn};
 use protobuf::Message;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::thread;
 use std::time::Duration;
+
+use chrono::Local;
 
 static INVERTER_PORT: u16 = 10081;
 
@@ -20,6 +23,7 @@ pub struct Inverter<'a> {
     port: u16,
     state: NetworkState,
     sequence: u16,
+    page_delay: Duration,
 }
 
 impl<'a> Inverter<'a> {
@@ -33,6 +37,7 @@ impl<'a> Inverter<'a> {
             port,
             state: NetworkState::Unknown,
             sequence: 0_u16,
+            page_delay: Duration::from_secs(1),
         }
     }
 
@@ -47,79 +52,33 @@ impl<'a> Inverter<'a> {
         }
     }
 
+    /// Fetches the real-time data, requesting further pages if the DTU splits its reply.
     pub fn update_state(&mut self) -> Option<HMSStateResponse> {
-        self.sequence = self.sequence.wrapping_add(1);
-
-        let /*mut*/ request = RealDataResDTO::default();
-        // let date = Local::now();
-        // let time_string = date.format("%Y-%m-%d %H:%M:%S").to_string();
-        // request.ymd_hms = time_string;
-        // request.cp = 23 + sequence as i32;
-        // request.offset = 0;
-        // request.time = epoch();
-        let header = b"\x48\x4d\xa3\x03";
-        let request_as_bytes = request.write_to_bytes().expect("serialize to bytes");
-        let crc16 = State::<MODBUS>::calculate(&request_as_bytes);
-        let len = request_as_bytes.len() as u16 + 10u16;
-
-        // compose request message
-        let mut message = Vec::new();
-        message.extend_from_slice(header);
-        message.extend_from_slice(&self.sequence.to_be_bytes());
-        message.extend_from_slice(&crc16.to_be_bytes());
-        message.extend_from_slice(&len.to_be_bytes());
-        message.extend_from_slice(&request_as_bytes);
-
-        let address = match (self.host, self.port).to_socket_addrs() {
-            Ok(mut a) => a.next(),
-            Err(e) => {
-                error!("Unable to resolve domain: {e}");
-                return None;
-            }
-        };
-        if address.is_none() {
-            error!("Unable to parse name");
-            return None;
-        }
-
-        let stream = TcpStream::connect_timeout(&address.unwrap(), Duration::from_millis(500));
-        if let Err(e) = stream {
-            debug!("could not connect: {e}");
-            self.set_state(NetworkState::Offline);
-            return None;
-        }
-
-        let mut stream = stream.unwrap();
-        if let Err(e) = stream.set_write_timeout(Some(Duration::new(5, 0))) {
-            warn!("could not set write timeout: {e}");
-        }
-        if let Err(e) = stream.set_read_timeout(Some(Duration::new(5, 0))) {
-            warn!("could not set read timeout: {e}");
-        }
-        if let Err(e) = stream.write_all(&message) {
-            debug!(r#"{e}"#);
-            self.set_state(NetworkState::Offline);
-            return None;
-        }
-
-        let payload = match read_frame(&mut stream, self.sequence) {
-            Ok(payload) => payload,
+        let mut response = match self.request_page(0) {
+            Ok(response) => response,
             Err(e) => {
                 debug!("{e}");
                 self.set_state(NetworkState::Offline);
                 return None;
             }
         };
-        let parsed = HMSStateResponse::parse_from_bytes(&payload);
-
-        if let Err(e) = parsed {
-            debug!("{e}");
-            self.set_state(NetworkState::Offline);
-            return None;
+        let pages = response.page_count.clamp(1, MAX_PAGES);
+        for page in 1..pages {
+            // the app waits between pages as well
+            thread::sleep(self.page_delay);
+            match self.request_page(page) {
+                Ok(next) => {
+                    response.inverter_state.extend(next.inverter_state);
+                    response.port_state.extend(next.port_state);
+                }
+                Err(e) => {
+                    debug!("page {page} of {pages}: {e}");
+                    self.set_state(NetworkState::Offline);
+                    return None;
+                }
+            }
         }
-        debug_assert!(parsed.is_ok());
 
-        let response = parsed.unwrap();
         if is_stale(&response) {
             // The DTU answered, but its last read of the inverter(s) failed; the values
             // are a repeat of the previous reading and must not be published as fresh.
@@ -129,7 +88,59 @@ impl<'a> Inverter<'a> {
         self.set_state(NetworkState::Online);
         Some(response)
     }
+
+    /// One request/reply exchange for page `page` of the real-time data (0xA311).
+    fn request_page(&mut self, page: i32) -> Result<HMSStateResponse, String> {
+        self.sequence = self.sequence.wrapping_add(1);
+
+        let now = Local::now();
+        let mut request = RealDataResDTO::new();
+        request.ymd_hms = now.format("%Y-%m-%d %H:%M:%S").to_string();
+        request.time = now.timestamp() as i32;
+        request.offset = now.offset().local_minus_utc();
+        request.cp = page;
+        let request_as_bytes = request.write_to_bytes().expect("serialize to bytes");
+        let crc16 = State::<MODBUS>::calculate(&request_as_bytes);
+        let len = request_as_bytes.len() as u16 + HEADER_LEN as u16;
+
+        // compose request message
+        let mut message = Vec::new();
+        message.extend_from_slice(b"HM");
+        message.extend_from_slice(&REAL_DATA_REQUEST.to_be_bytes());
+        message.extend_from_slice(&self.sequence.to_be_bytes());
+        message.extend_from_slice(&crc16.to_be_bytes());
+        message.extend_from_slice(&len.to_be_bytes());
+        message.extend_from_slice(&request_as_bytes);
+
+        // name resolution problems are configuration errors, so they are logged prominently
+        let address = match (self.host, self.port).to_socket_addrs() {
+            Ok(mut addresses) => addresses.next(),
+            Err(e) => {
+                error!("Unable to resolve domain: {e}");
+                None
+            }
+        }
+        .ok_or_else(|| format!("no address for {}", self.host))?;
+
+        let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(500))
+            .map_err(|e| format!("could not connect: {e}"))?;
+        if let Err(e) = stream.set_write_timeout(Some(Duration::new(5, 0))) {
+            warn!("could not set write timeout: {e}");
+        }
+        if let Err(e) = stream.set_read_timeout(Some(Duration::new(5, 0))) {
+            warn!("could not set read timeout: {e}");
+        }
+        stream.write_all(&message).map_err(|e| e.to_string())?;
+
+        let payload = read_frame(&mut stream, self.sequence)?;
+        HMSStateResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())
+    }
 }
+
+/// Real-time data request, answered with 0xA211 (RealDataNew in the S-Miles Installer app)
+const REAL_DATA_REQUEST: u16 = 0xa311;
+/// Upper bound for the number of pages requested per reading
+const MAX_PAGES: i32 = 16;
 
 const HEADER_LEN: usize = 10;
 // replies grow with the number of inverters and ports; the app caps payloads at 4096 bytes
@@ -188,7 +199,7 @@ pub fn is_stale(response: &HMSStateResponse) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::hoymiles::RealData::InverterState;
+    use crate::protos::hoymiles::RealData::{InverterState, PortState};
 
     fn response_with_links(links: &[i32]) -> HMSStateResponse {
         let mut response = HMSStateResponse::new();
@@ -277,7 +288,12 @@ mod tests {
 
         let requests = dtu.join().unwrap();
         for (i, request) in requests.iter().enumerate() {
-            assert_eq!(&request[0..4], b"HM\xa3\x03");
+            assert_eq!(&request[0..4], b"HM\xa3\x11");
+            let body = RealDataResDTO::parse_from_bytes(&request[HEADER_LEN..]).unwrap();
+            assert_eq!(body.cp, 0);
+            assert!((body.time as i64 - Local::now().timestamp()).abs() < 60);
+            assert_eq!(body.ymd_hms.len(), "2026-01-01 12:00:00".len());
+            assert_eq!(body.offset, Local::now().offset().local_minus_utc());
             // sequence numbers start at 1 and increase per request
             assert_eq!(u16::from_be_bytes([request[4], request[5]]), i as u16 + 1);
             let payload = &request[HEADER_LEN..];
@@ -290,6 +306,60 @@ mod tests {
                 request.len()
             );
         }
+    }
+
+    /// A reply with `inverters` linked inverters with 2 ports each, as page `page` of `pages`
+    fn page(dtu_sn: &str, pages: i32, page: i32, inverters: i64) -> HMSStateResponse {
+        let mut response = response_with_links(&vec![1; inverters as usize]);
+        response.dtu_sn = dtu_sn.to_string();
+        response.page_count = pages;
+        response.page = page;
+        for (n, inverter) in response.inverter_state.iter_mut().enumerate() {
+            inverter.inv_id = 100 * page as i64 + n as i64;
+        }
+        for _ in 0..2 * inverters {
+            response.port_state.push(PortState::new());
+        }
+        response
+    }
+
+    #[test]
+    fn update_state_requests_and_merges_all_pages() {
+        let (port, dtu) = fake_dtu(vec![
+            Box::new(|req| reply_to(req, &page("dtu", 2, 0, 2))),
+            Box::new(|req| reply_to(req, &page("dtu", 2, 1, 1))),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        inverter.page_delay = Duration::ZERO;
+
+        let reading = inverter.update_state().expect("fresh reading");
+        let ids: Vec<i64> = reading.inverter_state.iter().map(|i| i.inv_id).collect();
+        assert_eq!(ids, [0, 1, 100]);
+        assert_eq!(reading.port_state.len(), 6);
+
+        let requests = dtu.join().unwrap();
+        let pages: Vec<i32> = requests
+            .iter()
+            .map(|r| {
+                RealDataResDTO::parse_from_bytes(&r[HEADER_LEN..])
+                    .unwrap()
+                    .cp
+            })
+            .collect();
+        assert_eq!(pages, [0, 1]);
+    }
+
+    #[test]
+    fn update_state_fails_if_a_page_is_missing() {
+        let (port, dtu) = fake_dtu(vec![
+            Box::new(|req| reply_to(req, &page("dtu", 2, 0, 1))),
+            Box::new(|_| Vec::new()),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        inverter.page_delay = Duration::ZERO;
+        assert!(inverter.update_state().is_none());
+        assert_eq!(inverter.state(), NetworkState::Offline);
+        dtu.join().unwrap();
     }
 
     #[test]
