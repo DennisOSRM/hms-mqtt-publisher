@@ -9,6 +9,8 @@ pub struct RecordingMqtt {
     pub subscribed: Vec<String>,
     /// messages handed out by the next receive()
     pub incoming: Vec<(String, Vec<u8>)>,
+    /// availability topic the output configured the client with
+    pub availability_topic: Option<String>,
 }
 
 impl MqttWrapper for RecordingMqtt {
@@ -36,11 +38,12 @@ impl MqttWrapper for RecordingMqtt {
         Ok(())
     }
 
-    fn new(_config: &MqttConfig, _suffix: &str) -> Self {
+    fn new(config: &MqttConfig, _suffix: &str) -> Self {
         Self {
             published: Vec::new(),
             subscribed: Vec::new(),
             incoming: Vec::new(),
+            availability_topic: config.availability_topic.clone(),
         }
     }
 }
@@ -54,6 +57,7 @@ pub fn test_config() -> MqttConfig {
         tls: None,
         client_id: None,
         device_id: None,
+        availability_topic: None,
     }
 }
 

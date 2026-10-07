@@ -13,6 +13,17 @@ It supports two output channels: a simple MQTT publisher without a particular sc
 
 Readings the DTU marks as stale are skipped, see [Known limitations](#known-limitations).
 
+## Availability
+
+Each output publishes `online` to a retained availability topic whenever it (re)connects to the broker, and registers `offline` as its MQTT last will, which the broker publishes once the connection is lost. Home Assistant shows the entities as unavailable then.
+
+| Output         | Availability topic                                                                  |
+|----------------|-------------------------------------------------------------------------------------|
+| Home Assistant | `solar/hms_<device id>/availability`, without a device id `solar/<client id>/availability` |
+| Simple MQTT    | `hms800wt2/availability`, with a device id `<device id>/availability`               |
+
+The topic is fixed before connecting, so without a device id the Home Assistant output uses its MQTT client id instead of the DTU serial number. The client id is distinct per instance, see [Multiple inverters](#multiple-inverters).
+
 ## Power limit
 
 The active power limit of the inverters can be set in percent (2 to 100) of their rated power: in Home Assistant with the "Power Limit" number entity, or by publishing the percentage to `solar/hms_<device id>/power_limit/set` (Home Assistant output) or `hms800wt2/power_limit/set` (simple MQTT output, or `<device id>/power_limit/set`). The command takes the place of the next reading, so it is applied within one update interval. The limit applies to all inverters of the DTU.

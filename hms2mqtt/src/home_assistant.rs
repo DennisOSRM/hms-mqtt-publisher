@@ -16,15 +16,38 @@ pub struct HomeAssistant<MQTT: MqttWrapper> {
     device_id: Option<String>,
     /// command topic subscribed to, once the device id is known
     command_topic: Option<String>,
+    /// "online" / "offline" of this publisher, referenced by every discovered entity
+    availability_topic: String,
+}
+
+/// Availability topic of a Home Assistant output, e.g. `solar/hms_roof/availability`.
+///
+/// It has to be known before connecting, as it is the last will, so it can't use the DTU serial
+/// number. Without a device id, the client id (unique per broker connection) keeps instances
+/// apart.
+pub fn availability_topic(config: &MqttConfig) -> String {
+    match (&config.device_id, &config.client_id) {
+        (Some(device_id), _) => format!("solar/hms_{device_id}/availability"),
+        (None, Some(client_id)) => format!("solar/{client_id}/availability"),
+        (None, None) => "solar/hms-mqtt-publish-ha/availability".to_string(),
+    }
 }
 
 impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
     pub fn new(config: &MqttConfig) -> Self {
-        let client = MQTT::new(config, "-ha");
+        let availability_topic = availability_topic(config);
+        let client = MQTT::new(
+            &MqttConfig {
+                availability_topic: Some(availability_topic.clone()),
+                ..config.clone()
+            },
+            "-ha",
+        );
         Self {
             client,
             device_id: config.device_id.clone(),
             command_topic: None,
+            availability_topic,
         }
     }
 
@@ -118,10 +141,18 @@ impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
         let config_topic = format!("homeassistant/sensor/hms_{id}");
         let state_topic = format!("solar/hms_{id}/state");
 
-        let device_config = hms_state.create_sensor_configs(&state_topic, &id);
+        let availability_topic = self.availability_topic.clone();
+        let availability = Some(availability_topic.as_str());
+        let device_config: Vec<SensorConfig> = hms_state
+            .create_sensor_configs(&state_topic, &id)
+            .into_iter()
+            .map(|sensor| sensor.with_availability(availability))
+            .collect();
 
         self.publish_configs(&config_topic, &device_config);
-        if let Some(number) = hms_state.create_power_limit_config(&state_topic, &command_topic, &id)
+        if let Some(number) = hms_state
+            .create_power_limit_config(&state_topic, &command_topic, &id)
+            .map(|number| number.with_availability(availability))
         {
             let topic = format!("homeassistant/number/hms_{id}/{}/config", number.unique_id);
             self.publish_json(&topic, serde_json::to_value(number).unwrap());
@@ -586,6 +617,54 @@ mod tests {
                     config["unique_id"]
                 );
             }
+        }
+    }
+
+    #[test]
+    fn availability_topic_is_distinct_per_device_and_client() {
+        let topic = |device_id: Option<&str>, client_id: Option<&str>| {
+            let mut config = test_config();
+            config.device_id = device_id.map(str::to_string);
+            config.client_id = client_id.map(str::to_string);
+            HomeAssistant::<RecordingMqtt>::new(&config)
+                .client
+                .availability_topic
+                .unwrap()
+        };
+        assert_eq!(
+            topic(Some("roof"), Some("client")),
+            "solar/hms_roof/availability"
+        );
+        assert_eq!(
+            topic(None, Some("hms-mqtt-publish-hms-ha")),
+            "solar/hms-mqtt-publish-hms-ha/availability"
+        );
+        assert_eq!(topic(None, None), "solar/hms-mqtt-publish-ha/availability");
+        assert_ne!(topic(Some("roof"), None), topic(Some("garage"), None));
+    }
+
+    #[test]
+    fn every_discovered_entity_references_the_availability_topic() {
+        let mut config = test_config();
+        config.device_id = Some("roof".to_string());
+        let mut ha = HomeAssistant::<RecordingMqtt>::new(&config);
+        ha.publish(&response("414312345678", 1, 2));
+        let discovery: Vec<serde_json::Value> = ha
+            .client
+            .published
+            .iter()
+            .filter(|(t, _)| t.starts_with("homeassistant/"))
+            .map(|(_, payload)| serde_json::from_slice(payload).unwrap())
+            .collect();
+        assert!(discovery
+            .iter()
+            .any(|config| config["command_topic"].is_string()));
+        for config in discovery {
+            assert_eq!(
+                config["availability_topic"], "solar/hms_roof/availability",
+                "{}",
+                config["unique_id"]
+            );
         }
     }
 

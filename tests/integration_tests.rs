@@ -53,6 +53,7 @@ fn publish_one_message() {
             tls: None,
             client_id: None,
             device_id: None,
+            availability_topic: None,
         },
         "-test",
     );

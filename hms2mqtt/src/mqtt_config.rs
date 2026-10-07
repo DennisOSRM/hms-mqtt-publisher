@@ -12,4 +12,8 @@ pub struct MqttConfig {
     /// Name of the inverter in topics and Home Assistant ids; defaults to the first 8 characters
     /// of the DTU serial number (Home Assistant) and "hms800wt2" (simple MQTT)
     pub device_id: Option<String>,
+    /// Retained topic with "online" while connected and "offline" (the last will) after the
+    /// publisher is gone; derived by each output from its topics before it connects
+    #[serde(skip)]
+    pub availability_topic: Option<String>,
 }

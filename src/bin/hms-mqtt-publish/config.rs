@@ -309,6 +309,7 @@ mod tests {
             tls: Some(true),
             client_id: None,
             device_id: None,
+            availability_topic: None,
         };
         assert_eq!(config.inverter_host, "192.168.4.182");
         assert_eq!(config.update_interval, Some(60_500));
