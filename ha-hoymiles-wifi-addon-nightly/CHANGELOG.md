@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v0.8]
+Add performance_mode and startup_power_limit options
+
 ## [v0.7]
 Use the nightly publisher image built from this repository's main branch
 
