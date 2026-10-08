@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+message CommandResDTO {
+  int32 time = 1;
+  int32 action = 2;
+  int32 dev_kind = 3;
+  int32 package_nub = 4;
+  int32 package_now = 5;
+  int64 tid = 6;
+  string data = 7;
+}
+
+message CommandReqDTO {
+  string dtu_sn = 1;
+  int32 time = 2;
+  int32 action = 3;
+  int32 package_now = 4;
+  int32 err_code = 5;
+  int64 tid = 6;
+}

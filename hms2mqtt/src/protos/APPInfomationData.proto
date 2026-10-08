@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+message APPDtuInfoMO {
+  int32 device_kind = 1;
+  int32 dtu_sw_version = 2;
+  int32 dtu_hw_version = 3;
+  int32 dtu_step_time = 4;
+  int32 dtu_rf_hw_version = 5;
+  int32 dtu_rf_sw_version = 6;
+  int32 access_model = 7;
+  int32 communication_time = 8;
+  int32 signal_strength = 9;
+  string gprs_version = 10;
+  string wifi_version = 11;
+  string ka_number = 12;
+  int32 dtu_rule_id = 13;
+  int32 dtu_error_code = 14;
+  int32 dtu485_mode = 15;
+  int32 dtu485_address = 16;
+  int32 sub1g_frequency_band = 17;
+  int32 sub1g_channel_total_number = 18;
+  int32 sub1g_channel_number = 19;
+  int32 sub1g_rp = 20;
+  int32 sub1g_channel_total = 21;
+  string gprs_imei = 22;
+  int32 dtu_swb_time = 23;
+  int64 dfs = 24;
+  repeated int64 shls = 25;
+  int32 type = 26;
+  bytes enc_rand = 27;
+}
+
+message APPInfoDataReqDTO {
+  string dtu_serial_number = 1;
+  uint32 timestamp = 2;
+  int32 device_number = 3;
+  int32 pv_number = 4;
+  int32 package_number = 5;
+  int32 current_package = 6;
+  int32 channel = 7;
+  APPDtuInfoMO dtu_info = 8;
+}
+
+message APPInfoDataResDTO {
+  bytes time_ymd_hms = 1;
+  int32 offset = 2;
+  int32 current_package = 3;
+  int32 error_code = 4;
+  uint32 time = 5;
+}

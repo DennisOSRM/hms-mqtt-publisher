@@ -9,6 +9,7 @@ pub mod poller;
 pub mod simple_mqtt;
 
 // internal interfaces
+pub mod crypto;
 mod home_assistant_config;
 mod protos;
 #[cfg(test)]

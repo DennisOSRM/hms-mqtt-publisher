@@ -1,24 +1,46 @@
-use crate::protos::hoymiles::RealData::{
-    CommandRequest, CommandResponse, HMSStateResponse, RealDataResDTO, Warning, WarningsRequest,
-    WarningsResponse,
+use crate::crypto::{self, CryptoError};
+use crate::protos::hoymiles::{
+    APPInfomationData::{APPInfoDataReqDTO, APPInfoDataResDTO},
+    CommandPB::{CommandReqDTO, CommandResDTO},
+    RealData::{HMSStateResponse, RealDataResDTO, Warning, WarningsRequest, WarningsResponse},
+    RealDataNew::{RealDataNewReqDTO, RealDataNewResDTO},
 };
+use anyhow::{anyhow, Context, Result};
+use chrono::Local;
 use crc16::{State, MODBUS};
 use log::{debug, error, info, warn};
 use protobuf::Message;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::Local;
-
-static INVERTER_PORT: u16 = 10081;
+const INVERTER_PORT: u16 = 10081;
+const FRAME_HEADER_LENGTH: usize = 10;
+const GCM_TAG_LENGTH: usize = 16;
+const MAX_FRAME_LENGTH: usize = FRAME_HEADER_LENGTH + 4096;
+const APP_INFO_COMMAND: u16 = 0xa301;
+const APP_INFO_REQUEST_COMMAND: u16 = 0xa201;
+const REAL_DATA_NEW_COMMAND: u16 = 0xa311;
+const WARNINGS_REQUEST_COMMAND: u16 = 0xa304;
+const COMMAND_RES_COMMAND: u16 = 0xa305;
+const ENCRYPTION_FLAG_BIT: i64 = 25;
+const ACTION_LIMIT_POWER: i32 = 8;
+const ACTION_PERFORMANCE_DATA_MODE: i32 = 33;
+const MAX_PAGES: i32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NetworkState {
     Unknown,
     Online,
     Offline,
+}
+
+#[derive(Clone, Debug)]
+struct Capabilities {
+    encrypted: bool,
+    enc_rand: Option<Vec<u8>>,
+    dtu_serial_number: String,
+    firmware_version: i32,
 }
 
 pub struct Inverter<'a> {
@@ -28,14 +50,60 @@ pub struct Inverter<'a> {
     sequence: u16,
     page_delay: Duration,
     last_reading_stale: bool,
+    capabilities: Option<Capabilities>,
+    enable_performance_mode: bool,
+    initialize_power_limit: Option<u8>,
+    startup_command_state: StartupCommandState,
+}
+
+#[derive(Default)]
+struct StartupCommandState {
+    performance_mode_initialized: bool,
+    power_limit_initialized: bool,
+}
+
+impl StartupCommandState {
+    fn mark_performance_mode_initialized(&mut self) {
+        self.performance_mode_initialized = true;
+    }
+
+    fn mark_power_limit_initialized(&mut self) {
+        self.power_limit_initialized = true;
+    }
+
+    fn reset_performance_mode(&mut self) {
+        self.performance_mode_initialized = false;
+    }
 }
 
 impl<'a> Inverter<'a> {
     pub fn new(host: &'a str) -> Self {
-        Self::with_port(host, INVERTER_PORT)
+        Self::with_port_and_options(host, INVERTER_PORT, false, None)
     }
 
     pub fn with_port(host: &'a str, port: u16) -> Self {
+        Self::with_port_and_options(host, port, false, None)
+    }
+
+    pub fn with_options(
+        host: &'a str,
+        enable_performance_mode: bool,
+        initialize_power_limit: Option<u8>,
+    ) -> Self {
+        Self::with_port_and_options(
+            host,
+            INVERTER_PORT,
+            enable_performance_mode,
+            initialize_power_limit,
+        )
+    }
+
+    fn with_port_and_options(
+        host: &'a str,
+        port: u16,
+        enable_performance_mode: bool,
+        initialize_power_limit: Option<u8>,
+    ) -> Self {
         Self {
             host,
             port,
@@ -43,6 +111,10 @@ impl<'a> Inverter<'a> {
             sequence: 0_u16,
             page_delay: Duration::from_secs(1),
             last_reading_stale: false,
+            capabilities: None,
+            enable_performance_mode,
+            initialize_power_limit,
+            startup_command_state: StartupCommandState::default(),
         }
     }
 
@@ -50,8 +122,6 @@ impl<'a> Inverter<'a> {
         self.state
     }
 
-    /// Whether the DTU answered the last request with stale data, i.e. it currently doesn't
-    /// read the inverter, typically after being polled too often.
     pub fn last_reading_stale(&self) -> bool {
         self.last_reading_stale
     }
@@ -63,214 +133,725 @@ impl<'a> Inverter<'a> {
         }
     }
 
-    /// Fetches the real-time data, requesting further pages if the DTU splits its reply.
     pub fn update_state(&mut self) -> Option<HMSStateResponse> {
         self.last_reading_stale = false;
-        let mut response = match self.request_page(0) {
-            Ok(response) => response,
-            Err(e) => {
-                debug!("{e}");
+        if self.capabilities.is_none() {
+            if let Err(error) = self.load_capabilities() {
+                error!("Unable to read inverter application information: {error:#}");
                 self.set_state(NetworkState::Offline);
                 return None;
             }
-        };
-        let pages = response.page_count.clamp(1, MAX_PAGES);
-        for page in 1..pages {
-            // the app waits between pages as well
-            thread::sleep(self.page_delay);
-            match self.request_page(page) {
-                Ok(next) => {
-                    response.inverter_state.extend(next.inverter_state);
-                    response
-                        .three_phase_inverter_state
-                        .extend(next.three_phase_inverter_state);
-                    response.port_state.extend(next.port_state);
+        }
+        self.initialize_startup_commands();
+
+        match self.request_telemetry() {
+            Ok(response) => {
+                if is_stale(&response) {
+                    warn!("DTU reports no inverter link (link == 0), skipping stale reading");
+                    self.last_reading_stale = true;
+                    return None;
                 }
-                Err(e) => {
-                    debug!("page {page} of {pages}: {e}");
+                self.set_state(NetworkState::Online);
+                Some(response)
+            }
+            Err(error) if is_authentication_failure(&error) => {
+                warn!("Telemetry authentication failed; refreshing application information once");
+                self.capabilities = None;
+                if let Err(refresh_error) = self.load_capabilities() {
+                    error!("Unable to refresh inverter application information: {refresh_error:#}");
                     self.set_state(NetworkState::Offline);
                     return None;
                 }
+                self.startup_command_state.reset_performance_mode();
+                self.initialize_startup_commands();
+
+                match self.request_telemetry() {
+                    Ok(response) => {
+                        if is_stale(&response) {
+                            warn!(
+                                "DTU reports no inverter link (link == 0), skipping stale reading"
+                            );
+                            self.last_reading_stale = true;
+                            return None;
+                        }
+                        self.set_state(NetworkState::Online);
+                        Some(response)
+                    }
+                    Err(retry_error) => {
+                        error!("Unable to read inverter telemetry after reinitialization: {retry_error:#}");
+                        self.set_state(NetworkState::Offline);
+                        None
+                    }
+                }
+            }
+            Err(error) => {
+                error!("Unable to read inverter telemetry: {error:#}");
+                self.set_state(NetworkState::Offline);
+                None
             }
         }
+    }
 
-        if is_stale(&response) {
-            // The DTU answered, but its last read of the inverter(s) failed; the values
-            // are a repeat of the previous reading and must not be published as fresh.
-            warn!("DTU reports no inverter link (link == 0), skipping stale reading");
-            self.last_reading_stale = true;
+    fn initialize_startup_commands(&mut self) {
+        if self.enable_performance_mode && !self.startup_command_state.performance_mode_initialized
+        {
+            info!("Enabling performance data mode");
+            match self.enable_performance_data_mode() {
+                Ok(()) => info!("Performance data mode enabled"),
+                Err(error) => warn!("Unable to enable performance data mode: {error:#}"),
+            }
+            self.startup_command_state
+                .mark_performance_mode_initialized();
+        }
+
+        if let Some(power_limit) = self.initialize_power_limit {
+            if !self.startup_command_state.power_limit_initialized {
+                info!("Initializing inverter power limit to {power_limit}%");
+                match self.set_power_limit_command(power_limit) {
+                    Ok(()) => info!("Power limit initialized successfully"),
+                    Err(error) => warn!("Unable to initialize inverter power limit: {error:#}"),
+                }
+                self.startup_command_state.mark_power_limit_initialized();
+            }
+        }
+    }
+
+    fn load_capabilities(&mut self) -> Result<()> {
+        let request = build_application_info_request()?;
+        debug!("Sending A301 Application Information");
+        let payload = self.send_request(
+            APP_INFO_COMMAND,
+            &request,
+            false,
+            &[APP_INFO_COMMAND, APP_INFO_REQUEST_COMMAND],
+        )?;
+        let response = APPInfoDataReqDTO::parse_from_bytes(&payload)
+            .context("invalid Application Information protobuf")?;
+        let dtu_info = response
+            .dtu_info
+            .as_ref()
+            .context("Application Information response has no DTU information")?;
+        let encrypted = ((dtu_info.dfs >> ENCRYPTION_FLAG_BIT) & 1) != 0;
+        let enc_rand = if encrypted {
+            let enc_rand = dtu_info.enc_rand.clone();
+            if enc_rand.len() != 16 {
+                return Err(anyhow!(
+                    "encrypted inverter returned invalid enc_rand length {}",
+                    enc_rand.len()
+                ));
+            }
+            Some(enc_rand)
+        } else {
+            None
+        };
+
+        let capabilities = Capabilities {
+            encrypted,
+            enc_rand,
+            dtu_serial_number: response.dtu_serial_number.clone(),
+            firmware_version: dtu_info.dtu_sw_version,
+        };
+        info!(
+            "Firmware version: {}, encryption: {}",
+            capabilities.firmware_version,
+            if capabilities.encrypted {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        self.capabilities = Some(capabilities);
+        Ok(())
+    }
+
+    fn request_telemetry(&mut self) -> Result<HMSStateResponse> {
+        let capabilities = self
+            .capabilities
+            .clone()
+            .context("inverter capabilities are not initialized")?;
+        if capabilities.encrypted {
+            self.request_real_data_new(&capabilities)
+        } else {
+            self.request_plain_real_data()
+        }
+    }
+
+    fn enable_performance_data_mode(&mut self) -> Result<()> {
+        let request = build_performance_data_mode_request(unix_timestamp_i32()?)?;
+        let response = self.send_command(request)?;
+        validate_command_response(&response, ACTION_PERFORMANCE_DATA_MODE)
+    }
+
+    pub fn set_power_limit(&mut self, percent: u32) -> std::result::Result<(), String> {
+        if percent > 100 {
+            return Err("power limit must be between 0 and 100 percent".to_owned());
+        }
+        let percent = u8::try_from(percent)
+            .map_err(|_| "power limit must be between 0 and 100 percent".to_owned())?;
+        self.ensure_capabilities()
+            .and_then(|()| self.set_power_limit_command(percent))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn fetch_warnings(&mut self) -> Option<Vec<Warning>> {
+        if let Err(error) = self.ensure_capabilities() {
+            debug!("could not read inverter application information for warnings: {error:#}");
             return None;
         }
-        self.set_state(NetworkState::Online);
-        Some(response)
-    }
-
-    /// One request/reply exchange for page `page` of the real-time data (0xA311).
-    fn request_page(&mut self, page: i32) -> Result<HMSStateResponse, String> {
-        let now = Local::now();
-        let mut request = RealDataResDTO::new();
-        request.ymd_hms = now.format("%Y-%m-%d %H:%M:%S").to_string();
-        request.time = now.timestamp() as i32;
-        request.offset = now.offset().local_minus_utc();
-        request.cp = page;
-        let payload = self.exchange(REAL_DATA_REQUEST, &request)?;
-        HMSStateResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())
-    }
-
-    /// Fetches the warnings the DTU reports (0xA304). Every request counts towards the
-    /// DTU's rate limit, so this should be called rarely, right after a reading.
-    pub fn fetch_warnings(&mut self) -> Option<Vec<Warning>> {
+        let encrypted = self
+            .capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.encrypted);
         let mut warnings = Vec::new();
         let mut page = 0;
         loop {
             let now = Local::now();
-            let mut request = WarningsRequest::new();
-            request.ymd_hms = now.format("%Y-%m-%d %H:%M:%S").to_string();
-            request.time = now.timestamp() as i32;
-            request.offset = now.offset().local_minus_utc();
-            request.page = page;
-            let response = match self
-                .exchange(WARNINGS_REQUEST, &request)
-                .and_then(|payload| {
-                    WarningsResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())
+            let request = WarningsRequest {
+                ymd_hms: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+                page,
+                offset: now.offset().local_minus_utc(),
+                time: now.timestamp() as i32,
+                ..Default::default()
+            };
+            let payload = match request
+                .write_to_bytes()
+                .map_err(anyhow::Error::new)
+                .and_then(|bytes| {
+                    self.send_request(
+                        WARNINGS_REQUEST_COMMAND,
+                        &bytes,
+                        encrypted,
+                        &[
+                            WARNINGS_REQUEST_COMMAND,
+                            response_command(WARNINGS_REQUEST_COMMAND),
+                        ],
+                    )
+                })
+                .and_then(|bytes| {
+                    WarningsResponse::parse_from_bytes(&bytes)
+                        .map_err(anyhow::Error::new)
+                        .context("invalid warnings response protobuf")
                 }) {
                 Ok(response) => response,
-                Err(e) => {
-                    debug!("could not fetch warnings: {e}");
+                Err(error) => {
+                    debug!("could not fetch warnings: {error:#}");
                     return None;
                 }
             };
-            warnings.extend(response.warnings);
+            warnings.extend(payload.warnings);
             page += 1;
-            if page >= response.page_count.clamp(1, MAX_PAGES) {
+            if page >= payload.page_count.clamp(1, MAX_PAGES) {
                 return Some(warnings);
             }
-            thread::sleep(self.page_delay);
+            std::thread::sleep(self.page_delay);
         }
     }
 
-    /// Sets the active power limit of all inverters of the DTU, in percent of their rated
-    /// power (command action 8, as the vendor app sends it).
-    pub fn set_power_limit(&mut self, percent: u32) -> Result<(), String> {
-        let now = Local::now().timestamp();
-        let mut request = CommandRequest::new();
-        request.time = now as i32;
-        request.action = ACTION_POWER_LIMIT;
-        request.dev_kind = 0;
-        request.package_nub = 1;
-        request.tid = now;
-        // tenths of a percent for phase A; B and C are only used by three-phase setups
-        request.data = format!("A:{},B:0,C:0\r", percent * 10).into_bytes();
-        let payload = self.exchange(COMMAND_REQUEST, &request)?;
-        let response = CommandResponse::parse_from_bytes(&payload).map_err(|e| e.to_string())?;
-        if response.err_code != 0 {
-            return Err(format!(
+    fn ensure_capabilities(&mut self) -> Result<()> {
+        if self.capabilities.is_none() {
+            self.load_capabilities()?;
+        }
+        Ok(())
+    }
+
+    fn set_power_limit_command(&mut self, percent: u8) -> Result<()> {
+        let timestamp = unix_timestamp_i32()?;
+        let request = build_power_limit_request(percent, timestamp)?;
+        let response = self.send_command(request)?;
+        validate_command_response(&response, ACTION_LIMIT_POWER)
+    }
+
+    fn send_command(&mut self, request: CommandResDTO) -> Result<CommandReqDTO> {
+        let payload = request
+            .write_to_bytes()
+            .context("unable to serialize Hoymiles command request")?;
+        let response = self.send_request(
+            COMMAND_RES_COMMAND,
+            &payload,
+            self.capabilities
+                .as_ref()
+                .is_some_and(|capabilities| capabilities.encrypted),
+            &[COMMAND_RES_COMMAND, response_command(COMMAND_RES_COMMAND)],
+        )?;
+        CommandReqDTO::parse_from_bytes(&response)
+            .context("invalid Hoymiles command response protobuf")
+    }
+
+    fn request_plain_real_data(&mut self) -> Result<HMSStateResponse> {
+        let mut response = self.request_plain_real_data_page(0)?;
+        let pages = response.page_count.clamp(1, MAX_PAGES);
+        for page in 1..pages {
+            std::thread::sleep(self.page_delay);
+            let next = self.request_plain_real_data_page(page)?;
+            response.inverter_state.extend(next.inverter_state);
+            response
+                .three_phase_inverter_state
+                .extend(next.three_phase_inverter_state);
+            response.port_state.extend(next.port_state);
+        }
+        Ok(response)
+    }
+
+    fn request_plain_real_data_page(&mut self, page: i32) -> Result<HMSStateResponse> {
+        let now = Local::now();
+        let request = RealDataResDTO {
+            ymd_hms: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+            cp: page,
+            offset: now.offset().local_minus_utc(),
+            time: now.timestamp() as i32,
+            ..Default::default()
+        };
+        let payload = self.send_request(
+            REAL_DATA_NEW_COMMAND,
+            &request.write_to_bytes()?,
+            false,
+            &[response_command(REAL_DATA_NEW_COMMAND)],
+        )?;
+        HMSStateResponse::parse_from_bytes(&payload).context("invalid RealData protobuf")
+    }
+
+    fn request_real_data_new(&mut self, capabilities: &Capabilities) -> Result<HMSStateResponse> {
+        capabilities
+            .enc_rand
+            .as_deref()
+            .context("encrypted inverter has no enc_rand")?;
+        let mut request = build_real_data_new_request(0)?;
+        let mut combined = self.request_real_data_new_page(&request)?;
+        let package_count = combined.ap.clamp(1, MAX_PAGES);
+
+        for package in 1..package_count {
+            std::thread::sleep(self.page_delay);
+            request = build_real_data_new_request(package)?;
+            let response = self.request_real_data_new_page(&request)?;
+            combined
+                .merge_from_bytes(&response.write_to_bytes()?)
+                .context("unable to combine RealDataNew protobuf pages")?;
+        }
+
+        map_real_data_new(&combined, capabilities)
+    }
+
+    fn request_real_data_new_page(
+        &mut self,
+        request: &RealDataNewResDTO,
+    ) -> Result<RealDataNewReqDTO> {
+        let request_bytes = request.write_to_bytes()?;
+        debug!("Sending A311 RealDataNew");
+        let payload = self.send_request(
+            REAL_DATA_NEW_COMMAND,
+            &request_bytes,
+            true,
+            &[
+                REAL_DATA_NEW_COMMAND,
+                response_command(REAL_DATA_NEW_COMMAND),
+            ],
+        )?;
+        RealDataNewReqDTO::parse_from_bytes(&payload)
+            .context("invalid RealDataNew protobuf")
+            .inspect(|response| {
+                debug!(
+                    "RealDataNew telemetry: timestamp={}, dtu_power={}, sgs_power={:?}, sgs_current={:?}, sgs_voltage={:?}, pv_power={:?}, pv_current={:?}, pv_voltage={:?}, pv_daily={:?}, pv_total={:?}, modulation={:?}",
+                    response.timestamp,
+                    response.dtu_power,
+                    response
+                        .sgs_data
+                        .iter()
+                        .map(|value| value.active_power)
+                        .collect::<Vec<_>>(),
+                    response
+                        .sgs_data
+                        .iter()
+                        .map(|value| value.current)
+                        .collect::<Vec<_>>(),
+                    response
+                        .sgs_data
+                        .iter()
+                        .map(|value| value.voltage)
+                        .collect::<Vec<_>>(),
+                    response
+                        .pv_data
+                        .iter()
+                        .map(|value| value.power)
+                        .collect::<Vec<_>>(),
+                    response
+                        .pv_data
+                        .iter()
+                        .map(|value| value.current)
+                        .collect::<Vec<_>>(),
+                    response
+                        .pv_data
+                        .iter()
+                        .map(|value| value.voltage)
+                        .collect::<Vec<_>>(),
+                    response
+                        .pv_data
+                        .iter()
+                        .map(|value| value.energy_daily)
+                        .collect::<Vec<_>>(),
+                    response
+                        .pv_data
+                        .iter()
+                        .map(|value| value.energy_total)
+                        .collect::<Vec<_>>(),
+                    response
+                        .sgs_data
+                        .iter()
+                        .map(|value| value.modulation_index_signal)
+                        .collect::<Vec<_>>()
+                );
+                debug!(
+                    "Received RealDataNew page {} with {} SGS values and {} PV values",
+                    response.cp,
+                    response.sgs_data.len(),
+                    response.pv_data.len()
+                );
+            })
+    }
+
+    fn send_request(
+        &mut self,
+        command: u16,
+        payload: &[u8],
+        encrypted: bool,
+        expected_response_commands: &[u16],
+    ) -> Result<Vec<u8>> {
+        self.sequence = self.sequence.wrapping_add(1);
+        let sequence = self.sequence;
+        let message = build_frame(
+            command,
+            sequence,
+            payload,
+            encrypted,
+            self.encryption_rand(),
+        )?;
+        debug!(
+            "Sending Hoymiles command 0x{command:04x}, sequence {sequence}, frame size {}",
+            message.len()
+        );
+
+        let inverter_host = format!("{}:{}", self.host, self.port);
+        let address = inverter_host
+            .to_socket_addrs()
+            .context("unable to resolve inverter address")?
+            .next()
+            .context("inverter address did not resolve")?;
+        let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(500))
+            .context("unable to connect to inverter")?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .context("unable to set inverter write timeout")?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .context("unable to set inverter read timeout")?;
+        stream
+            .write_all(&message)
+            .context("unable to write inverter request")?;
+
+        read_response(
+            &mut stream,
+            sequence,
+            encrypted,
+            self.encryption_rand(),
+            expected_response_commands,
+        )
+    }
+
+    fn encryption_rand(&self) -> Option<&[u8]> {
+        self.capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.enc_rand.as_deref())
+    }
+}
+
+fn is_authentication_failure(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CryptoError>()
+        .is_some_and(|crypto_error| *crypto_error == CryptoError::AuthenticationFailed)
+}
+
+fn response_command(request_command: u16) -> u16 {
+    (request_command & 0x00ff) | 0xa200
+}
+#[cfg(test)]
+pub(crate) const HEADER_LEN: usize = 10;
+
+fn build_application_info_request() -> Result<Vec<u8>> {
+    let request = APPInfoDataResDTO {
+        time_ymd_hms: current_time_string().into_bytes(),
+        offset: 28_800,
+        time: unix_timestamp()?,
+        ..Default::default()
+    };
+    request
+        .write_to_bytes()
+        .context("unable to serialize Application Information request")
+}
+
+fn build_real_data_new_request(package: i32) -> Result<RealDataNewResDTO> {
+    Ok(RealDataNewResDTO {
+        time_ymd_hms: current_time_string().into_bytes(),
+        offset: 28_800,
+        time: unix_timestamp()? as i32,
+        cp: package,
+        ..Default::default()
+    })
+}
+
+fn build_power_limit_request(percent: u8, timestamp: i32) -> Result<CommandResDTO> {
+    if percent > 100 {
+        return Err(anyhow!("power limit must be between 0 and 100 percent"));
+    }
+
+    Ok(CommandResDTO {
+        time: timestamp,
+        action: ACTION_LIMIT_POWER,
+        package_nub: 1,
+        tid: i64::from(timestamp),
+        data: format!("A:{},B:0,C:0\r", i32::from(percent) * 10),
+        ..Default::default()
+    })
+}
+
+fn build_performance_data_mode_request(timestamp: i32) -> Result<CommandResDTO> {
+    Ok(CommandResDTO {
+        time: timestamp,
+        action: ACTION_PERFORMANCE_DATA_MODE,
+        package_nub: 1,
+        ..Default::default()
+    })
+}
+
+fn validate_command_response(response: &CommandReqDTO, action: i32) -> Result<()> {
+    if response.action != 0 && response.action != action {
+        return Err(anyhow!(
+            "Hoymiles command response action mismatch: expected {action}, received {}",
+            response.action
+        ));
+    }
+    if response.err_code != 0 {
+        if action == ACTION_LIMIT_POWER {
+            return Err(anyhow!(
                 "DTU rejected the power limit (error {})",
                 response.err_code
             ));
         }
-        info!("power limit set to {percent} %");
-        Ok(())
+        return Err(anyhow!(
+            "Hoymiles command action {action} failed with error code {}",
+            response.err_code
+        ));
     }
-
-    /// Sends `request` with command `cmd` and returns the payload of the reply.
-    fn exchange(&mut self, cmd: u16, request: &impl Message) -> Result<Vec<u8>, String> {
-        self.sequence = self.sequence.wrapping_add(1);
-
-        let request_as_bytes = request.write_to_bytes().expect("serialize to bytes");
-        let crc16 = State::<MODBUS>::calculate(&request_as_bytes);
-        let len = request_as_bytes.len() as u16 + HEADER_LEN as u16;
-
-        // compose request message
-        let mut message = Vec::new();
-        message.extend_from_slice(b"HM");
-        message.extend_from_slice(&cmd.to_be_bytes());
-        message.extend_from_slice(&self.sequence.to_be_bytes());
-        message.extend_from_slice(&crc16.to_be_bytes());
-        message.extend_from_slice(&len.to_be_bytes());
-        message.extend_from_slice(&request_as_bytes);
-
-        // name resolution problems are configuration errors, so they are logged prominently
-        let address = match (self.host, self.port).to_socket_addrs() {
-            Ok(mut addresses) => addresses.next(),
-            Err(e) => {
-                error!("Unable to resolve domain: {e}");
-                None
-            }
-        }
-        .ok_or_else(|| format!("no address for {}", self.host))?;
-
-        let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(500))
-            .map_err(|e| format!("could not connect: {e}"))?;
-        if let Err(e) = stream.set_write_timeout(Some(Duration::new(5, 0))) {
-            warn!("could not set write timeout: {e}");
-        }
-        if let Err(e) = stream.set_read_timeout(Some(Duration::new(5, 0))) {
-            warn!("could not set read timeout: {e}");
-        }
-        stream.write_all(&message).map_err(|e| e.to_string())?;
-
-        read_frame(&mut stream, self.sequence)
-    }
+    Ok(())
 }
 
-/// Real-time data request, answered with 0xA211 (RealDataNew in the S-Miles Installer app)
-const REAL_DATA_REQUEST: u16 = 0xa311;
-/// Warnings request, answered with 0xA204 (WarnData in the S-Miles Installer app)
-const WARNINGS_REQUEST: u16 = 0xa304;
-/// Control command, answered with 0xA205 (CommandPB in the S-Miles Installer app)
-const COMMAND_REQUEST: u16 = 0xa305;
-const ACTION_POWER_LIMIT: i32 = 8;
-/// Upper bound for the number of pages requested per reading
-const MAX_PAGES: i32 = 16;
+fn current_time_string() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
 
-pub(crate) const HEADER_LEN: usize = 10;
-// replies grow with the number of inverters and ports; the app caps payloads at 4096 bytes
-const MAX_FRAME_LEN: usize = HEADER_LEN + 4096;
+fn unix_timestamp() -> Result<u32> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before Unix epoch")
+        .map(|duration| duration.as_secs().try_into().unwrap_or(u32::MAX))
+}
 
-/// Reads one HM frame ("HM" | cmd | seq | crc | len | payload) and returns its payload.
-/// The length field covers header and payload, so the frame is read completely even if it
-/// arrives in several TCP segments, and short or malformed replies become errors instead of panics.
-/// The reply must be a DTU response (0xA2xx), echo `expected_seq` and carry a valid CRC-16/MODBUS.
-pub fn read_frame<R: Read>(reader: &mut R, expected_seq: u16) -> Result<Vec<u8>, String> {
-    let mut header = [0u8; HEADER_LEN];
+fn unix_timestamp_i32() -> Result<i32> {
+    unix_timestamp()?
+        .try_into()
+        .context("Unix timestamp does not fit into Hoymiles int32 field")
+}
+
+fn build_frame(
+    command: u16,
+    sequence: u16,
+    payload: &[u8],
+    encrypted: bool,
+    enc_rand: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    let wire_payload = if encrypted {
+        let enc_rand = enc_rand.context("encrypted request has no enc_rand")?;
+        crypto::encrypt(enc_rand, command, sequence, payload).map_err(anyhow::Error::new)?
+    } else {
+        payload.to_vec()
+    };
+    let crc_payload = if encrypted {
+        wire_payload
+            .get(..wire_payload.len().saturating_sub(GCM_TAG_LENGTH))
+            .context("encrypted payload is shorter than the GCM tag")?
+    } else {
+        &wire_payload
+    };
+    let crc = State::<MODBUS>::calculate(crc_payload);
+    let length = if encrypted {
+        wire_payload
+            .len()
+            .checked_sub(GCM_TAG_LENGTH)
+            .and_then(|length| length.checked_add(FRAME_HEADER_LENGTH))
+            .context("encrypted request length overflow")?
+    } else {
+        wire_payload
+            .len()
+            .checked_add(FRAME_HEADER_LENGTH)
+            .context("request length overflow")?
+    };
+    if length > u16::MAX as usize {
+        return Err(anyhow!("request frame is too large: {length} bytes"));
+    }
+
+    let mut frame = Vec::with_capacity(FRAME_HEADER_LENGTH + wire_payload.len());
+    frame.extend_from_slice(b"HM");
+    frame.extend_from_slice(&command.to_be_bytes());
+    frame.extend_from_slice(&sequence.to_be_bytes());
+    frame.extend_from_slice(&crc.to_be_bytes());
+    frame.extend_from_slice(&(length as u16).to_be_bytes());
+    frame.extend_from_slice(&wire_payload);
+    Ok(frame)
+}
+
+fn read_response<R: Read>(
+    reader: &mut R,
+    expected_sequence: u16,
+    encrypted: bool,
+    enc_rand: Option<&[u8]>,
+    expected_commands: &[u16],
+) -> Result<Vec<u8>> {
+    let mut header = [0_u8; FRAME_HEADER_LENGTH];
     reader
         .read_exact(&mut header)
-        .map_err(|e| format!("could not read frame header: {e}"))?;
-    if &header[0..2] != b"HM" {
-        return Err(format!("unexpected frame magic {:02x?}", &header[0..2]));
+        .context("unable to read inverter frame header")?;
+    if &header[..2] != b"HM" {
+        return Err(anyhow!("invalid Hoymiles frame header"));
     }
-    let cmd = u16::from_be_bytes([header[2], header[3]]);
-    let seq = u16::from_be_bytes([header[4], header[5]]);
-    let crc = u16::from_be_bytes([header[6], header[7]]);
-    let len = u16::from_be_bytes([header[8], header[9]]) as usize;
-    debug!("received frame cmd 0x{cmd:04x} seq {seq} len {len}");
-    // responses are the request command - 0x100, e.g. 0xa303 is answered with 0xa203 or 0xa211
-    if cmd >> 8 != 0xa2 {
-        return Err(format!("unexpected response command 0x{cmd:04x}"));
-    }
-    if seq != expected_seq {
-        return Err(format!(
-            "unexpected sequence number {seq}, expected {expected_seq}"
+
+    let command = u16::from_be_bytes([header[2], header[3]]);
+    if !expected_commands.contains(&command) {
+        return Err(anyhow!(
+            "unexpected Hoymiles response command 0x{command:04x}"
         ));
     }
-    if !(HEADER_LEN..=MAX_FRAME_LEN).contains(&len) {
-        return Err(format!("invalid frame length {len}"));
+    let sequence = u16::from_be_bytes([header[4], header[5]]);
+    if sequence != expected_sequence {
+        return Err(anyhow!(
+            "unexpected Hoymiles response sequence {sequence}, expected {expected_sequence}"
+        ));
     }
-    let mut payload = vec![0u8; len - HEADER_LEN];
+    let expected_crc = u16::from_be_bytes([header[6], header[7]]);
+    let declared_length = u16::from_be_bytes([header[8], header[9]]) as usize;
+    if !(FRAME_HEADER_LENGTH..=MAX_FRAME_LENGTH).contains(&declared_length) {
+        return Err(anyhow!("invalid Hoymiles frame length {declared_length}"));
+    }
+
+    let payload_length = declared_length - FRAME_HEADER_LENGTH;
+    let mut payload = vec![0_u8; payload_length];
     reader
         .read_exact(&mut payload)
-        .map_err(|e| format!("could not read frame payload: {e}"))?;
-    let computed_crc = State::<MODBUS>::calculate(&payload);
-    if computed_crc != crc {
-        return Err(format!(
-            "CRC mismatch: frame says 0x{crc:04x}, payload has 0x{computed_crc:04x}"
+        .context("unable to read complete inverter frame payload")?;
+    let tag = if encrypted {
+        let mut tag = [0_u8; GCM_TAG_LENGTH];
+        reader
+            .read_exact(&mut tag)
+            .context("unable to read complete GCM authentication tag")?;
+        Some(tag)
+    } else {
+        None
+    };
+
+    let crc = State::<MODBUS>::calculate(&payload);
+    if crc != expected_crc {
+        return Err(anyhow!(
+            "Hoymiles CRC mismatch: calculated 0x{crc:04x}, received 0x{expected_crc:04x}"
         ));
     }
-    Ok(payload)
+
+    if encrypted {
+        let mut ciphertext = payload;
+        ciphertext.extend_from_slice(&tag.context("missing GCM authentication tag")?);
+        let enc_rand = enc_rand.context("encrypted response has no enc_rand")?;
+        crypto::decrypt(enc_rand, command, sequence, &ciphertext).map_err(anyhow::Error::new)
+    } else {
+        Ok(payload)
+    }
 }
 
-/// A reading is stale when no inverter (single- or three-phase) reports a working link to the DTU.
+fn checked_u64_to_i32(value: u64, field: &str) -> Result<i32> {
+    value
+        .try_into()
+        .with_context(|| format!("{field} does not fit into the legacy data model: {value}"))
+}
+
+fn checked_usize_to_i32(value: usize, field: &str) -> Result<i32> {
+    value
+        .try_into()
+        .with_context(|| format!("{field} does not fit into the legacy data model: {value}"))
+}
+
+fn map_real_data_new(
+    response: &RealDataNewReqDTO,
+    capabilities: &Capabilities,
+) -> Result<HMSStateResponse> {
+    if response.sgs_data.is_empty() {
+        return Err(anyhow!("RealDataNew response contains no SGS telemetry"));
+    }
+
+    let dtu_serial_number = if !capabilities.dtu_serial_number.is_empty() {
+        capabilities.dtu_serial_number.clone()
+    } else if !response.device_serial_number.is_empty() {
+        response.device_serial_number.clone()
+    } else {
+        response
+            .sgs_data
+            .first()
+            .map(|sgs| sgs.serial_number.to_string())
+            .context("RealDataNew response contains no device serial number")?
+    };
+
+    let mut mapped = HMSStateResponse {
+        dtu_sn: dtu_serial_number,
+        time: response.timestamp,
+        page_count: response.ap,
+        page: response.cp,
+        version: response.firmware_version,
+        pv_current_power: checked_u64_to_i32(response.dtu_power, "dtu_power")?,
+        pv_daily_yield: checked_u64_to_i32(response.dtu_daily_energy, "dtu_daily_energy")?,
+        ..Default::default()
+    };
+
+    for (index, sgs) in response.sgs_data.iter().enumerate() {
+        let inverter = crate::protos::hoymiles::RealData::InverterState {
+            inv_id: sgs.serial_number,
+            port_id: checked_usize_to_i32(index + 1, "inverter index")?,
+            grid_voltage: sgs.voltage,
+            grid_freq: sgs.frequency,
+            pv_current_power: sgs.active_power,
+            reactive_power: sgs.reactive_power,
+            ac_current: sgs.current,
+            power_factor: sgs.power_factor,
+            temperature: sgs.temperature,
+            warning_count: sgs.warning_number,
+            link: sgs.link_status,
+            power_limit: sgs.power_limit,
+            mi_signal: sgs.modulation_index_signal,
+            ..Default::default()
+        };
+        mapped.inverter_state.push(inverter);
+    }
+
+    for pv in &response.pv_data {
+        let port = crate::protos::hoymiles::RealData::PortState {
+            pv_sn: pv.serial_number,
+            pv_port: pv.port_number,
+            pv_vol: pv.voltage,
+            pv_cur: pv.current,
+            pv_power: pv.power,
+            pv_energy_total: pv.energy_total,
+            pv_daily_yield: pv.energy_daily,
+            ..Default::default()
+        };
+        mapped.port_state.push(port);
+    }
+
+    Ok(mapped)
+}
+
 pub fn is_stale(response: &HMSStateResponse) -> bool {
     response
         .inverter_state
@@ -288,8 +869,18 @@ pub fn is_stale(response: &HMSStateResponse) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::hoymiles::RealData::{InverterState, PortState, ThreePhaseInverterState};
+    use crate::protos::hoymiles::{
+        CommandPB::CommandResDTO,
+        RealData::{
+            CommandRequest, CommandResponse, HMSStateResponse, InverterState, PortState,
+            ThreePhaseInverterState,
+        },
+        RealDataNew::{PvMO, RealDataNewReqDTO, SGSMO},
+    };
     use crate::test_support::{fake_dtu, reply_to};
+    use crc16::{State, MODBUS};
+    use protobuf::Message;
+    use std::io::{self, Read};
 
     fn response_with_links(links: &[i32]) -> HMSStateResponse {
         let mut response = HMSStateResponse::new();
@@ -316,8 +907,6 @@ mod tests {
         assert!(is_stale(&response_with_links(&[0])));
         assert!(is_stale(&response_with_links(&[0, 0])));
     }
-
-    const SEQ: u16 = 1;
 
     #[test]
     fn update_state_returns_fresh_reading_and_sends_valid_request() {
@@ -346,8 +935,8 @@ mod tests {
             assert!((body.time as i64 - Local::now().timestamp()).abs() < 60);
             assert_eq!(body.ymd_hms.len(), "2026-01-01 12:00:00".len());
             assert_eq!(body.offset, Local::now().offset().local_minus_utc());
-            // sequence numbers start at 1 and increase per request
-            assert_eq!(u16::from_be_bytes([request[4], request[5]]), i as u16 + 1);
+            // Application Information uses sequence 1; telemetry starts at 2.
+            assert_eq!(u16::from_be_bytes([request[4], request[5]]), i as u16 + 2);
             let payload = &request[HEADER_LEN..];
             assert_eq!(
                 u16::from_be_bytes([request[6], request[7]]),
@@ -557,92 +1146,238 @@ mod tests {
         assert!(inverter.update_state().is_none());
     }
 
-    /// A frame with the given command and length field and a correct CRC over `payload`.
-    fn frame_with(cmd: u16, len_field: u16, payload: &[u8]) -> Vec<u8> {
-        let mut f = b"HM".to_vec();
-        f.extend_from_slice(&cmd.to_be_bytes());
-        f.extend_from_slice(&SEQ.to_be_bytes());
-        f.extend_from_slice(&State::<MODBUS>::calculate(payload).to_be_bytes());
-        f.extend_from_slice(&len_field.to_be_bytes());
-        f.extend_from_slice(payload);
-        f
+    struct PartialReader {
+        data: Vec<u8>,
+        position: usize,
+        chunk_size: usize,
     }
 
-    fn frame(len_field: u16, payload: &[u8]) -> Vec<u8> {
-        frame_with(0xa211, len_field, payload)
-    }
-
-    /// Delivers the data one byte per read() call, like a badly fragmented TCP stream.
-    struct Trickle(Vec<u8>, usize);
-    impl Read for Trickle {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.1 >= self.0.len() || buf.is_empty() {
+    impl Read for PartialReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.position == self.data.len() {
                 return Ok(0);
             }
-            buf[0] = self.0[self.1];
-            self.1 += 1;
-            Ok(1)
+            let end = (self.position + self.chunk_size)
+                .min(self.data.len())
+                .min(self.position + buffer.len());
+            let length = end - self.position;
+            buffer[..length].copy_from_slice(&self.data[self.position..end]);
+            self.position = end;
+            Ok(length)
         }
     }
 
     #[test]
-    fn read_frame_returns_payload() {
-        let payload = b"\x0a\x02ab";
-        let data = frame(10 + payload.len() as u16, payload);
-        assert_eq!(read_frame(&mut data.as_slice(), SEQ).unwrap(), payload);
-        assert_eq!(read_frame(&mut Trickle(data, 0), SEQ).unwrap(), payload);
-        let legacy = frame_with(0xa203, 10 + payload.len() as u16, payload);
-        assert_eq!(read_frame(&mut legacy.as_slice(), SEQ).unwrap(), payload);
+    fn reads_plain_frames_across_partial_tcp_reads() {
+        let frame = build_frame(REAL_DATA_NEW_COMMAND, 9, b"synthetic protobuf", false, None)
+            .expect("frame builds");
+        let mut reader = PartialReader {
+            data: frame,
+            position: 0,
+            chunk_size: 2,
+        };
+
+        let payload = read_response(&mut reader, 9, false, None, &[REAL_DATA_NEW_COMMAND])
+            .expect("frame reads");
+        assert_eq!(payload, b"synthetic protobuf");
     }
 
     #[test]
-    fn read_frame_rejects_bad_crc() {
-        let mut data = frame(10 + 4, b"\x0a\x02ab");
-        data[7] ^= 0xff;
-        assert!(read_frame(&mut data.as_slice(), SEQ).is_err());
-        let mut data = frame(10 + 4, b"\x0a\x02ab");
-        data[12] ^= 0x01; // corrupted payload byte
-        assert!(read_frame(&mut data.as_slice(), SEQ).is_err());
+    fn rejects_invalid_crc_before_parsing() {
+        let mut frame = build_frame(REAL_DATA_NEW_COMMAND, 9, b"synthetic protobuf", false, None)
+            .expect("frame builds");
+        frame[10] ^= 1;
+        let mut reader = io::Cursor::new(frame);
+
+        let error = read_response(&mut reader, 9, false, None, &[REAL_DATA_NEW_COMMAND])
+            .expect_err("CRC mismatch must fail");
+        assert!(error.to_string().contains("CRC mismatch"));
     }
 
     #[test]
-    fn read_frame_rejects_non_response_command() {
-        for cmd in [0xa311, 0xa303, 0xda11, 0x0000] {
-            let data = frame_with(cmd, 10 + 2, b"ab");
-            assert!(read_frame(&mut data.as_slice(), SEQ).is_err());
-        }
+    fn encrypted_frame_crc_excludes_authentication_tag() {
+        let enc_rand = [0x42_u8; 16];
+        let frame = build_frame(0xa311, 9, b"synthetic protobuf", true, Some(&enc_rand))
+            .expect("frame builds");
+        let encrypted_payload_length = frame.len() - 10 - 16;
+        let crc = State::<MODBUS>::calculate(&frame[10..10 + encrypted_payload_length]);
+        assert_eq!(crc, u16::from_be_bytes([frame[6], frame[7]]));
     }
 
     #[test]
-    fn read_frame_rejects_wrong_sequence() {
-        let data = frame(10 + 2, b"ab");
-        assert!(read_frame(&mut data.as_slice(), SEQ + 1).is_err());
+    fn reads_and_decrypts_encrypted_frames() {
+        let enc_rand = [0x42_u8; 16];
+        let frame = build_frame(0xa211, 9, b"synthetic protobuf", true, Some(&enc_rand))
+            .expect("frame builds");
+        let mut reader = io::Cursor::new(frame);
+
+        let payload = read_response(&mut reader, 9, true, Some(&enc_rand), &[0xa211])
+            .expect("encrypted frame reads");
+        assert_eq!(payload, b"synthetic protobuf");
     }
 
     #[test]
-    fn read_frame_rejects_short_or_bad_replies() {
-        assert!(read_frame(&mut &b""[..], SEQ).is_err());
-        assert!(read_frame(&mut &b"HM\xa2\x11"[..], SEQ).is_err());
-        assert!(read_frame(&mut frame(10 + 5, b"ab").as_slice(), SEQ).is_err()); // truncated payload
-        assert!(read_frame(&mut frame(4, b"").as_slice(), SEQ).is_err()); // length below header size
-        let mut bad_magic = frame(10, b"");
-        bad_magic[0] = b'X';
-        assert!(read_frame(&mut bad_magic.as_slice(), SEQ).is_err());
+    fn maps_real_data_new_sgs_and_multiple_pv_ports() {
+        let mut response = RealDataNewReqDTO {
+            device_serial_number: "414392375232".to_string(),
+            timestamp: 1_789_712_893,
+            dtu_power: 1_285,
+            dtu_daily_energy: 52,
+            ..Default::default()
+        };
+        response.sgs_data.push(SGSMO {
+            serial_number: 22_069_995_065_906,
+            firmware_version: 1,
+            voltage: 2_366,
+            frequency: 4_999,
+            active_power: 1_285,
+            current: 54,
+            power_factor: 1_000,
+            temperature: 183,
+            warning_number: 2,
+            link_status: 1,
+            power_limit: 750,
+            reactive_power: 12,
+            modulation_index_signal: 7_405_661,
+            ..Default::default()
+        });
+        response.pv_data.extend([
+            PvMO {
+                serial_number: 22_069_995_065_906,
+                port_number: 1,
+                voltage: 430,
+                current: 162,
+                power: 698,
+                energy_total: 1_295_701,
+                energy_daily: 27,
+                ..Default::default()
+            },
+            PvMO {
+                serial_number: 22_069_995_065_906,
+                port_number: 2,
+                voltage: 421,
+                current: 156,
+                power: 658,
+                energy_total: 1_312_058,
+                energy_daily: 25,
+                ..Default::default()
+            },
+        ]);
+
+        let capabilities = Capabilities {
+            encrypted: true,
+            enc_rand: Some(vec![0x42_u8; 16]),
+            dtu_serial_number: String::new(),
+            firmware_version: 1,
+        };
+        let mapped = map_real_data_new(&response, &capabilities).expect("telemetry maps");
+
+        assert_eq!(mapped.dtu_sn, "414392375232");
+        assert_eq!(mapped.pv_current_power, 1_285);
+        assert_eq!(mapped.pv_daily_yield, 52);
+        assert_eq!(mapped.inverter_state.len(), 1);
+        assert_eq!(mapped.inverter_state[0].ac_current, 54);
+        assert_eq!(mapped.inverter_state[0].reactive_power, 12);
+        assert_eq!(mapped.inverter_state[0].power_factor, 1_000);
+        assert_eq!(mapped.inverter_state[0].warning_count, 2);
+        assert_eq!(mapped.inverter_state[0].link, 1);
+        assert_eq!(mapped.inverter_state[0].power_limit, 750);
+        assert_eq!(mapped.inverter_state[0].mi_signal, 7_405_661);
+        assert_eq!(mapped.port_state.len(), 2);
+        assert_eq!(mapped.port_state[1].pv_port, 2);
+        assert_eq!(mapped.port_state[1].pv_energy_total, 1_312_058);
     }
 
     #[test]
-    fn linked_three_phase_inverter_is_fresh() {
-        let mut response = response_with_links(&[]);
+    fn stale_detection_checks_single_and_three_phase_inverters() {
+        let mut response = HMSStateResponse::new();
+        assert!(super::is_stale(&response));
+
+        let mut inverter = InverterState::new();
+        inverter.link = 1;
+        response.inverter_state.push(inverter);
+        assert!(!super::is_stale(&response));
+        response.inverter_state[0].link = 0;
+        assert!(super::is_stale(&response));
+
         let mut inverter = ThreePhaseInverterState::new();
         inverter.link = 1;
         response.three_phase_inverter_state.push(inverter);
-        assert!(!is_stale(&response));
-        response.three_phase_inverter_state[0].link = 0;
-        assert!(is_stale(&response));
+        assert!(!super::is_stale(&response));
     }
 
     #[test]
-    fn no_inverters_is_stale() {
-        assert!(is_stale(&response_with_links(&[])));
+    fn public_power_limit_rejects_values_over_one_hundred_without_connecting() {
+        let mut inverter = super::Inverter::new("localhost");
+        assert!(inverter.set_power_limit(101).is_err());
+    }
+
+    #[test]
+    fn serializes_performance_data_mode_request() {
+        let request = build_performance_data_mode_request(1_789_712_893).expect("request builds");
+
+        assert_eq!(request.time, 1_789_712_893);
+        assert_eq!(request.action, 33);
+        assert_eq!(request.package_nub, 1);
+        assert_eq!(request.tid, 0);
+        assert!(request.data.is_empty());
+    }
+
+    #[test]
+    fn serializes_power_limit_request_and_validates_bounds() {
+        let minimum = build_power_limit_request(0, 1_789_712_893).expect("request builds");
+        assert_eq!(minimum.data, "A:0,B:0,C:0\r");
+
+        let request = build_power_limit_request(100, 1_789_712_893).expect("request builds");
+
+        assert_eq!(request.time, 1_789_712_893);
+        assert_eq!(request.action, 8);
+        assert_eq!(request.package_nub, 1);
+        assert_eq!(request.tid, 1_789_712_893);
+        assert_eq!(request.data, "A:1000,B:0,C:0\r");
+        assert!(build_power_limit_request(101, 1_789_712_893).is_err());
+    }
+
+    #[test]
+    fn encrypted_command_uses_existing_frame_path() {
+        let enc_rand = [0x42_u8; 16];
+        let request = CommandResDTO {
+            action: 33,
+            package_nub: 1,
+            ..Default::default()
+        };
+        let payload = request.write_to_bytes().expect("request serializes");
+        let frame = build_frame(COMMAND_RES_COMMAND, 9, &payload, true, Some(&enc_rand))
+            .expect("encrypted command frame builds");
+        let mut reader = io::Cursor::new(frame);
+
+        let decrypted = read_response(
+            &mut reader,
+            9,
+            true,
+            Some(&enc_rand),
+            &[COMMAND_RES_COMMAND],
+        )
+        .expect("encrypted command frame reads");
+        let parsed = CommandResDTO::parse_from_bytes(&decrypted).expect("request parses");
+        assert_eq!(parsed.action, 33);
+        assert_eq!(parsed.package_nub, 1);
+    }
+
+    #[test]
+    fn startup_command_state_reinitializes_only_performance_mode() {
+        let mut state = super::StartupCommandState::default();
+
+        assert!(!state.performance_mode_initialized);
+        assert!(!state.power_limit_initialized);
+
+        state.mark_performance_mode_initialized();
+        state.mark_power_limit_initialized();
+        assert!(state.performance_mode_initialized);
+        assert!(state.power_limit_initialized);
+
+        state.reset_performance_mode();
+        assert!(!state.performance_mode_initialized);
+        assert!(state.power_limit_initialized);
     }
 }

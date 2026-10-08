@@ -2,6 +2,7 @@
 use crate::inverter::HEADER_LEN;
 use crate::mqtt_config::MqttConfig;
 use crate::mqtt_wrapper::{MqttWrapper, QoS};
+use crate::protos::hoymiles::APPInfomationData::{APPDtuInfoMO, APPInfoDataReqDTO};
 use crate::protos::hoymiles::RealData::{HMSStateResponse, InverterState, PortState};
 use crc16::{State, MODBUS};
 use protobuf::Message;
@@ -96,15 +97,26 @@ pub fn fake_dtu(replies: Vec<Reply>) -> (u16, std::thread::JoinHandle<Vec<Vec<u8
     let handle = std::thread::spawn(move || {
         let mut requests = Vec::new();
         for reply in replies {
-            let (mut conn, _) = listener.accept().unwrap();
-            let mut header = [0u8; HEADER_LEN];
-            conn.read_exact(&mut header).unwrap();
-            let len = u16::from_be_bytes([header[8], header[9]]) as usize;
-            let mut request = header.to_vec();
-            request.resize(len, 0);
-            conn.read_exact(&mut request[HEADER_LEN..]).unwrap();
-            conn.write_all(&reply(&request)).unwrap();
-            requests.push(request);
+            loop {
+                let (mut conn, _) = listener.accept().unwrap();
+                let mut header = [0u8; HEADER_LEN];
+                conn.read_exact(&mut header).unwrap();
+                let len = u16::from_be_bytes([header[8], header[9]]) as usize;
+                let mut request = header.to_vec();
+                request.resize(len, 0);
+                conn.read_exact(&mut request[HEADER_LEN..]).unwrap();
+                if request_command(&request) == 0xa301 {
+                    let mut response = APPInfoDataReqDTO::new();
+                    response.dtu_info = Some(APPDtuInfoMO::new()).into();
+                    let payload = response.write_to_bytes().unwrap();
+                    conn.write_all(&frame_reply(&request, 0xa201, &payload))
+                        .unwrap();
+                    continue;
+                }
+                conn.write_all(&reply(&request)).unwrap();
+                requests.push(request);
+                break;
+            }
         }
         requests
     });

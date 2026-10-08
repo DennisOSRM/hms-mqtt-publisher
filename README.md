@@ -28,6 +28,10 @@ The topic is fixed before connecting, so without a device id the Home Assistant 
 
 The active power limit of the inverters can be set in percent (2 to 100) of their rated power: in Home Assistant with the "Power Limit" number entity, or by publishing the percentage to `solar/hms_<device id>/power_limit/set` (Home Assistant output) or `hms800wt2/power_limit/set` (simple MQTT output, or `<device id>/power_limit/set`). The command takes the place of the next reading, so it is applied within one update interval. The limit applies to all inverters of the DTU.
 
+## Encrypted local traffic
+
+Newer firmware that encrypts local traffic is detected automatically. The publisher obtains the encryption parameters from the inverter and decrypts telemetry locally; no Hoymiles cloud connection is required.
+
 ## How to run
 
 Use the [Docker image](#docker), the [Home Assistant add-on](#home-assistant-add-on), or build it from source:
@@ -97,4 +101,4 @@ Please note: The tool does not come with any guarantees and if by chance you fry
 ## Known limitations
 - Fresh data is available about every 30 seconds. A request within about 30 seconds of the previous one gets the previous reading and restarts the DTU's countdown; after a few such requests the DTU stops reading the inverter for a while. The default interval of 30.5 s stays below that limit, readings marked as stale are skipped, and the publisher pauses for a minute or longer after a stale reading. Other clients polling the same inverter count against the same limit.
 - Developed and tested with an HMS-800W-2T. Other HMS models, DTUs and three-phase inverters use the same protocol but are untested; values of three-phase inverters assume the scaling of single-phase ones.
-- DTUs that encrypt their local traffic (newer firmware) are not supported yet.
+- Telemetry uses A311; encrypted DTUs return RealDataNew, while unencrypted DTUs return RealData. Other inverter models and firmware versions remain untested.

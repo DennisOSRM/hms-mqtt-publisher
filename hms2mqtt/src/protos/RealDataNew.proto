@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+message SGSMO {
+  int64 serial_number = 1;
+  int32 firmware_version = 2;
+  int32 voltage = 3;
+  int32 frequency = 4;
+  int32 active_power = 5;
+  int32 reactive_power = 6;
+  int32 current = 7;
+  int32 power_factor = 8;
+  int32 temperature = 9;
+  int32 warning_number = 10;
+  int32 crc_checksum = 11;
+  int32 link_status = 12;
+  int32 power_limit = 13;
+  int32 modulation_index_signal = 20;
+}
+
+message PvMO {
+  int64 serial_number = 1;
+  int32 port_number = 2;
+  int32 voltage = 3;
+  int32 current = 4;
+  int32 power = 5;
+  int32 energy_total = 6;
+  int32 energy_daily = 7;
+  int32 error_code = 8;
+}
+
+message RealDataNewReqDTO {
+  string device_serial_number = 1;
+  int32 timestamp = 2;
+  int32 ap = 3;
+  int32 cp = 4;
+  int32 firmware_version = 5;
+  repeated SGSMO sgs_data = 9;
+  repeated PvMO pv_data = 11;
+  uint64 dtu_power = 12;
+  uint64 dtu_daily_energy = 13;
+}
+
+message RealDataNewResDTO {
+  bytes time_ymd_hms = 1;
+  int32 cp = 2;
+  int32 error_code = 3;
+  int32 offset = 4;
+  int32 time = 5;
+}
