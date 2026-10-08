@@ -15,8 +15,6 @@ exclude = [
 ]
 
 [workspace]
-# plain `cargo test` / `cargo clippy` (as in CI) also cover the library
-default-members = [".", "hms2mqtt"]
 
 [dependencies]
 anyhow = "1.0.95"
