@@ -24,6 +24,12 @@ The following mqtt options can be acquired via the home assistant API if availab
 The update_interval setting controls the frequency of the updates. This should not be
 set to a value less than 30 seconds (see limitations below), any smaller values will be ignored.
 
+Optional settings:
+
+- `device_id`: Name of the inverter in topics and entity ids; set different ids to run one add-on per inverter.
+- `performance_mode`: Asks the DTU for its fast real-time data mode once at startup.
+- `startup_power_limit`: Power limit in percent (2 to 100) set once at startup.
+
 - `update_interval: 60500`: The interval in milliseconds between updates.
 
 ## Example configuration

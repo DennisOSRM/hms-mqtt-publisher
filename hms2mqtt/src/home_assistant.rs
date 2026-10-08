@@ -5,10 +5,10 @@ use crate::{
     protos::hoymiles::RealData::{HMSStateResponse, Warning},
 };
 
-use crate::command::{parse_power_limit, Command, POWER_LIMIT_RANGE};
+use crate::command::{power_limit_commands, Command, POWER_LIMIT_RANGE};
 use crate::home_assistant_config::{NumberConfig, SensorConfig};
-use crate::metric_collector::MetricCollector;
-use log::{debug, error, warn};
+use crate::metric_collector::{warnings_json, MetricCollector};
+use log::{debug, error};
 use serde_json::json;
 
 pub struct HomeAssistant<MQTT: MqttWrapper> {
@@ -90,40 +90,17 @@ impl<MQTT: MqttWrapper> HomeAssistant<MQTT> {
 impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
     fn publish_warnings(&mut self, hms_state: &HMSStateResponse, warnings: &[Warning]) {
         let topic = format!("solar/hms_{}/warnings", self.id(hms_state));
-        let list: Vec<serde_json::Value> = warnings
-            .iter()
-            .map(|w| {
-                json!({
-                    "inverter": w.inv_id,
-                    "code": w.code,
-                    "count": w.count,
-                    "start": w.start_time,
-                    "end": w.end_time,
-                })
-            })
-            .collect();
         self.publish_json(
             &topic,
-            json!({ "warnings_count": warnings.len(), "warnings": list }),
+            json!({ "warnings_count": warnings.len(), "warnings": warnings_json(warnings) }),
         );
     }
 
     fn commands(&mut self) -> Vec<Command> {
-        let Some(command_topic) = self.command_topic.clone() else {
-            return Vec::new();
-        };
-        self.client
-            .receive()
-            .into_iter()
-            .filter(|(topic, _)| *topic == command_topic)
-            .filter_map(|(_, payload)| match parse_power_limit(&payload) {
-                Ok(command) => Some(command),
-                Err(e) => {
-                    warn!("ignoring command on {command_topic}: {e}");
-                    None
-                }
-            })
-            .collect()
+        match &self.command_topic {
+            Some(topic) => power_limit_commands(self.client.receive(), topic),
+            None => Vec::new(),
+        }
     }
 
     fn publish(&mut self, hms_state: &HMSStateResponse) {
@@ -141,18 +118,17 @@ impl<MQTT: MqttWrapper> MetricCollector for HomeAssistant<MQTT> {
         let config_topic = format!("homeassistant/sensor/hms_{id}");
         let state_topic = format!("solar/hms_{id}/state");
 
-        let availability_topic = self.availability_topic.clone();
-        let availability = Some(availability_topic.as_str());
+        let availability = self.availability_topic.clone();
         let device_config: Vec<SensorConfig> = hms_state
             .create_sensor_configs(&state_topic, &id)
             .into_iter()
-            .map(|sensor| sensor.with_availability(availability))
+            .map(|sensor| sensor.with_availability(&availability))
             .collect();
 
         self.publish_configs(&config_topic, &device_config);
         if let Some(number) = hms_state
             .create_power_limit_config(&state_topic, &command_topic, &id)
-            .map(|number| number.with_availability(availability))
+            .map(|number| number.with_availability(&availability))
         {
             let topic = format!("homeassistant/number/hms_{id}/{}/config", number.unique_id);
             self.publish_json(&topic, serde_json::to_value(number).unwrap());
@@ -193,7 +169,7 @@ impl HMSStateResponse {
     }
 
     fn to_json_payload(&self) -> serde_json::Value {
-        // when modifying this function, modify the sensor config in create_device_config accordingly
+        // when modifying this function, modify create_sensor_configs accordingly
         let mut json = json!({
             "dtu_sn": self.dtu_sn,
             "pv_current_power": format!("{:.2}", self.pv_current_power as f32 * 0.1),
@@ -214,7 +190,7 @@ impl HMSStateResponse {
             json[format!("pv_{}_daily_yield", port.pv_port)] = port.pv_daily_yield.into();
             json[format!("pv_{}_code", port.pv_port)] = port.code.into();
         }
-        // Convert each InverterState to json (for a HMS-XXXW-2T, there is only one inverter)
+        // Convert each InverterState to json (HMS-XXXXW-xT models report one inverter)
         for inverter in self.inverter_state.iter() {
             json[format!("inv_{}_grid_voltage", inverter.port_id)] =
                 format!("{:.2}", inverter.grid_voltage as f32 * 0.1).into();
@@ -770,6 +746,29 @@ mod tests {
                 .trim_end_matches(" }}");
             assert!(!json[key].is_null(), "missing {key}");
         }
+    }
+
+    #[test]
+    fn three_phase_power_limit_has_a_sensor_and_a_number_entity() {
+        let mut r = response("414312345678", 0, 4);
+        let mut inverter = ThreePhaseInverterState::new();
+        inverter.link = 1;
+        inverter.power_limit = 755;
+        r.three_phase_inverter_state.push(inverter);
+        assert_eq!(r.to_json_payload()["inv3_1_power_limit"], "75.5");
+
+        let sensors = r.create_sensor_configs("solar/hms_41431234/state", "41431234");
+        assert!(sensors
+            .iter()
+            .any(|c| c.unique_id == "hms_41431234_inv3_1_power_limit"));
+        let number = r
+            .create_power_limit_config("solar/hms_41431234/state", "set", "41431234")
+            .expect("number entity");
+        let number = serde_json::to_value(number).unwrap();
+        assert!(number["value_template"]
+            .as_str()
+            .unwrap()
+            .contains("inv3_1_power_limit"));
     }
 
     #[test]

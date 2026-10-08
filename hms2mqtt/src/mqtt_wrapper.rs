@@ -12,14 +12,9 @@ pub enum QoS {
     ExactlyOnce,
 }
 
-// TODO: add an implementation of the MqttWrapper for testing
-// TODO: should this be renamed to MqttImplementation?
+/// Decouples the library from an MQTT client implementation: callers wrap their client in a
+/// type implementing this trait.
 pub trait MqttWrapper {
-    // This trait provides an interface that the decouples library code from an
-    // implementation of the MQTT client. On library calling code, one needs to
-    // wrap the MQTT implementation, i.e. the client, in a new type that in
-    // turn implements this trait.
-
     fn subscribe(&mut self, topic: &str, qos: QoS) -> anyhow::Result<()>;
 
     fn publish<S, V>(&mut self, topic: S, qos: QoS, retain: bool, payload: V) -> anyhow::Result<()>
@@ -30,7 +25,5 @@ pub trait MqttWrapper {
     fn new(config: &MqttConfig, suffix: &str) -> Self;
 
     /// Messages received on subscribed topics since the last call, as (topic, payload)
-    fn receive(&mut self) -> Vec<(String, Vec<u8>)> {
-        Vec::new()
-    }
+    fn receive(&mut self) -> Vec<(String, Vec<u8>)>;
 }

@@ -8,6 +8,21 @@ pub enum Command {
 /// Range the vendor app allows for the power limit
 pub const POWER_LIMIT_RANGE: std::ops::RangeInclusive<u32> = 2..=100;
 
+/// Power limit commands among received (topic, payload) messages; invalid payloads are logged
+pub fn power_limit_commands(messages: Vec<(String, Vec<u8>)>, topic: &str) -> Vec<Command> {
+    messages
+        .into_iter()
+        .filter(|(received, _)| received == topic)
+        .filter_map(|(_, payload)| match parse_power_limit(&payload) {
+            Ok(command) => Some(command),
+            Err(e) => {
+                log::warn!("ignoring command on {topic}: {e}");
+                None
+            }
+        })
+        .collect()
+}
+
 /// Parses a power limit command payload like "50" or "50.0" (percent)
 pub fn parse_power_limit(payload: &[u8]) -> Result<Command, String> {
     let text = String::from_utf8_lossy(payload);

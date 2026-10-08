@@ -1,4 +1,3 @@
-// TODO: support CA33 command to take over metrics consumption
 // TODO: support publishing to S-Miles cloud, too
 
 mod config;
@@ -28,16 +27,9 @@ fn update_interval(configured: Option<u64>) -> u64 {
         .unwrap_or(REQUEST_DELAY_DEFAULT)
 }
 
-/// config.toml from the current working dir, or next to the executable if the former doesn't exist
-fn config_file() -> Option<PathBuf> {
-    let candidates = [
-        std::env::current_dir().ok(),
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf())),
-    ];
-    candidates
-        .into_iter()
+/// config.toml from the first of `dirs` that has one
+fn config_file(dirs: impl IntoIterator<Item = Option<PathBuf>>) -> Option<PathBuf> {
+    dirs.into_iter()
         .flatten()
         .map(|dir| dir.join("config.toml"))
         .find(|path| path.exists())
@@ -59,7 +51,14 @@ fn main() {
         error!("Arguments passed. Tool is configured by config.toml and environment variables");
     }
 
-    let contents = match config_file() {
+    // the current working dir first, then the directory of the executable
+    let config_dirs = [
+        std::env::current_dir().ok(),
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf())),
+    ];
+    let contents = match config_file(config_dirs) {
         Some(path) => {
             info!("loading configuration from {}", path.display());
             match fs::read_to_string(&path) {
@@ -142,5 +141,21 @@ mod tests {
             REQUEST_DELAY_DEFAULT
         );
         assert_eq!(update_interval(Some(60_000)), 60_000);
+    }
+
+    #[test]
+    fn config_file_is_taken_from_the_first_dir_that_has_one() {
+        let root = std::env::temp_dir().join(format!("hms-config-test-{}", std::process::id()));
+        let (empty, first, second) = (root.join("empty"), root.join("first"), root.join("second"));
+        for dir in [&empty, &first, &second] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(first.join("config.toml"), "").unwrap();
+        fs::write(second.join("config.toml"), "").unwrap();
+
+        let found = config_file([None, Some(empty.clone()), Some(first.clone()), Some(second)]);
+        assert_eq!(found, Some(first.join("config.toml")));
+        assert_eq!(config_file([None, Some(empty)]), None);
+        fs::remove_dir_all(root).unwrap();
     }
 }

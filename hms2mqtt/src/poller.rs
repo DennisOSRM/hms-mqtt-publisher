@@ -99,8 +99,10 @@ impl<'a> Poller<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::hoymiles::RealData::{
-        CommandResponse, HMSStateResponse, InverterState, Warning, WarningsResponse,
+    use crate::inverter::FRAME_HEADER_LENGTH;
+    use crate::protos::hoymiles::{
+        CommandPB::{CommandReqDTO, CommandResDTO},
+        RealData::{HMSStateResponse, InverterState, Warning, WarningsResponse},
     };
     use crate::test_support::{fake_dtu, frame_reply, reply_to, request_command, Reply};
     use protobuf::Message;
@@ -164,13 +166,7 @@ mod tests {
     }
 
     fn command_accepted() -> Reply {
-        Box::new(|req| {
-            frame_reply(
-                req,
-                0xa205,
-                &CommandResponse::new().write_to_bytes().unwrap(),
-            )
-        })
+        Box::new(|req| frame_reply(req, 0xa205, &CommandReqDTO::new().write_to_bytes().unwrap()))
     }
 
     /// A poller for a fake DTU with `replies`, one output with `commands` queued
@@ -282,17 +278,15 @@ mod tests {
         let requests = dtu.join().unwrap();
         assert_eq!(request_command(&requests[0]), 0xa305);
         // only the latest command is sent
-        let command =
-            crate::protos::hoymiles::RealData::CommandRequest::parse_from_bytes(&requests[0][10..])
-                .unwrap();
-        assert_eq!(command.data, b"A:500,B:0,C:0\r");
+        let command = CommandResDTO::parse_from_bytes(&requests[0][FRAME_HEADER_LENGTH..]).unwrap();
+        assert_eq!(command.data, "A:500,B:0,C:0\r");
         assert_eq!(request_command(&requests[1]), 0xa311);
     }
 
     #[test]
     fn rejected_command_keeps_polling() {
         let rejected: Reply = Box::new(|req| {
-            let mut response = CommandResponse::new();
+            let mut response = CommandReqDTO::new();
             response.err_code = 3;
             frame_reply(req, 0xa205, &response.write_to_bytes().unwrap())
         });

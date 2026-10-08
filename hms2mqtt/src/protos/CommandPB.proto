@@ -1,20 +1,22 @@
 syntax = "proto3";
 
+// Control command (0xA305)
 message CommandResDTO {
-  int32 time = 1;
-  int32 action = 2;
-  int32 dev_kind = 3;
+  int32 time = 1;               // epoch
+  int32 action = 2;             // e.g. 8: power limit, 33: performance data mode
+  int32 dev_kind = 3;           // 0: the DTU and all its inverters
   int32 package_nub = 4;
   int32 package_now = 5;
-  int64 tid = 6;
-  string data = 7;
+  int64 tid = 6;                // transaction id, the app uses the epoch
+  string data = 7;              // action parameters, ASCII
 }
 
+// Reply to CommandResDTO (0xA205)
 message CommandReqDTO {
   string dtu_sn = 1;
   int32 time = 2;
   int32 action = 3;
   int32 package_now = 4;
-  int32 err_code = 5;
+  int32 err_code = 5;           // 0: accepted
   int64 tid = 6;
 }

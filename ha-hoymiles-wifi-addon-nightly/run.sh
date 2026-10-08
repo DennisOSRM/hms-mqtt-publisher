@@ -38,7 +38,7 @@ fi
 if [[ "$UPDATE_INTERVAL" -lt 60500 ]]; then
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "The update_interval is set to a value lower than 60500."
-    echo "This is not recommended and may cause the inverter to become unresponsive."
+    echo "The inverter may then skip some of its uploads to the S-Miles cloud."
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 fi
 
@@ -57,6 +57,13 @@ EOF
 # Distinct device ids keep the Home Assistant entities of several inverters apart
 if bashio::config.has_value 'device_id'; then
     export DEVICE_ID="$(bashio::config 'device_id')"
+fi
+
+if bashio::config.true 'performance_mode'; then
+    export PERFORMANCE_MODE=true
+fi
+if bashio::config.has_value 'startup_power_limit'; then
+    export STARTUP_POWER_LIMIT="$(bashio::config 'startup_power_limit')"
 fi
 
 # if DEBUG_LOGGING is true, set the RUST_LOG=debug environment variable to enable debug logging

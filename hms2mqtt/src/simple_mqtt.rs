@@ -1,6 +1,6 @@
 use crate::{
-    command::{parse_power_limit, Command},
-    metric_collector::MetricCollector,
+    command::{power_limit_commands, Command},
+    metric_collector::{warnings_json, MetricCollector},
     mqtt_config::MqttConfig,
     mqtt_wrapper::{MqttWrapper, QoS},
     protos::hoymiles::RealData::{HMSStateResponse, Warning},
@@ -54,35 +54,11 @@ impl<MQTT: MqttWrapper> SimpleMqtt<MQTT> {
 
 impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
     fn commands(&mut self) -> Vec<Command> {
-        let command_topic = self.command_topic();
-        self.client
-            .receive()
-            .into_iter()
-            .filter(|(topic, _)| *topic == command_topic)
-            .filter_map(|(_, payload)| match parse_power_limit(&payload) {
-                Ok(command) => Some(command),
-                Err(e) => {
-                    warn!("ignoring command on {command_topic}: {e}");
-                    None
-                }
-            })
-            .collect()
+        power_limit_commands(self.client.receive(), &self.command_topic())
     }
 
     fn publish_warnings(&mut self, _hms_state: &HMSStateResponse, warnings: &[Warning]) {
         let prefix = &self.topic_prefix;
-        let list: Vec<serde_json::Value> = warnings
-            .iter()
-            .map(|w| {
-                serde_json::json!({
-                    "inverter": w.inv_id,
-                    "code": w.code,
-                    "count": w.count,
-                    "start": w.start_time,
-                    "end": w.end_time,
-                })
-            })
-            .collect();
         for (topic, payload) in [
             (
                 format!("{prefix}/warnings_count"),
@@ -90,7 +66,7 @@ impl<MQTT: MqttWrapper> MetricCollector for SimpleMqtt<MQTT> {
             ),
             (
                 format!("{prefix}/warnings"),
-                serde_json::Value::from(list).to_string(),
+                warnings_json(warnings).to_string(),
             ),
         ] {
             if let Err(e) = self.client.publish(topic, QoS::AtMostOnce, true, payload) {

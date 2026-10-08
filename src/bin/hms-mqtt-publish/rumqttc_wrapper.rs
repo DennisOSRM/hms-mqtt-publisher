@@ -71,14 +71,9 @@ fn mqtt_options(config: &MqttConfig, suffix: &str) -> MqttOptions {
         mqttoptions.set_transport(Transport::tls_with_config(tls_client_config().into()));
     }
 
-    //parse the mqtt authentication options
-    if let Some((username, password)) = match (&config.username, &config.password) {
-        (None, None) => None,
-        (None, Some(_)) => None,
-        (Some(username), None) => Some((username.clone(), "".into())),
-        (Some(username), Some(password)) => Some((username.clone(), password.clone())),
-    } {
-        mqttoptions.set_credentials(username, password);
+    // a password without a user name isn't sent
+    if let Some(username) = &config.username {
+        mqttoptions.set_credentials(username, config.password.clone().unwrap_or_default());
     }
 
     // sent by the broker once the connection is lost without a proper disconnect
@@ -117,23 +112,17 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         S: Clone + Into<String>,
         V: Clone + Into<Vec<u8>>,
     {
-        // try publishing up to three times
-        if self
-            .client
-            .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
-            .is_ok()
-        {
-            return Ok(());
+        // try publishing up to three times, as the request queue may be full
+        for _ in 0..2 {
+            if self
+                .client
+                .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
+                .is_ok()
+            {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
-        std::thread::sleep(Duration::from_millis(100));
-        if self
-            .client
-            .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
-            .is_ok()
-        {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
         Ok(self
             .client
             .try_publish(topic, match_qos(qos), retain, payload)?)
@@ -147,10 +136,8 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         let (event_client, event_subscriptions) = (client.clone(), subscriptions.clone());
         let availability_topic = config.availability_topic.clone();
         thread::spawn(move || {
-            // keep polling the event loop to make sure outgoing messages get sent
-            // the call to .iter() blocks and suspends the thread effectively by
-            // calling .recv() under the hood. This implies that the loop terminates
-            // once the client unsubs
+            // polling the event loop sends outgoing messages and reconnects after errors;
+            // it blocks until the next event and runs for the lifetime of the process
             for event in connection.iter() {
                 match event {
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
@@ -239,6 +226,30 @@ mod tests {
             ..config(None, None)
         };
         assert_eq!(mqtt_options(&config, "-sm").client_id(), "mine");
+    }
+
+    #[test]
+    fn credentials_need_a_user_name() {
+        let credentials = |username: Option<&str>, password: Option<&str>| {
+            let config = MqttConfig {
+                username: username.map(str::to_owned),
+                password: password.map(str::to_owned),
+                ..config(None, None)
+            };
+            mqtt_options(&config, "-sm")
+                .credentials()
+                .map(|login| (login.username, login.password))
+        };
+        assert_eq!(credentials(None, None), None);
+        assert_eq!(credentials(None, Some("secret")), None);
+        assert_eq!(
+            credentials(Some("user"), None),
+            Some(("user".to_owned(), String::new()))
+        );
+        assert_eq!(
+            credentials(Some("user"), Some("secret")),
+            Some(("user".to_owned(), "secret".to_owned()))
+        );
     }
 
     #[test]
