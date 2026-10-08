@@ -85,6 +85,33 @@ pub fn response(dtu_sn: &str, inverters: usize, ports: usize) -> HMSStateRespons
     response
 }
 
+/// How long a fake DTU waits for the next request, so that a test expecting more requests
+/// than the inverter sends fails instead of hanging
+const FAKE_DTU_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The next connection to `listener`, failing after `FAKE_DTU_TIMEOUT`
+fn accept(listener: &std::net::TcpListener) -> std::net::TcpStream {
+    listener.set_nonblocking(true).unwrap();
+    let deadline = std::time::Instant::now() + FAKE_DTU_TIMEOUT;
+    loop {
+        match listener.accept() {
+            Ok((conn, _)) => {
+                conn.set_nonblocking(false).unwrap();
+                conn.set_read_timeout(Some(FAKE_DTU_TIMEOUT)).unwrap();
+                return conn;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "fake DTU: no request within {FAKE_DTU_TIMEOUT:?}, fewer requests than replies?"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) => panic!("fake DTU: accept failed: {e}"),
+        }
+    }
+}
+
 /// Answer of the fake DTU to one request frame
 pub type Reply = Box<dyn Fn(&[u8]) -> Vec<u8> + Send>;
 
@@ -111,7 +138,7 @@ fn fake_dtu_with(
         let mut requests = Vec::new();
         for reply in replies {
             loop {
-                let (mut conn, _) = listener.accept().unwrap();
+                let mut conn = accept(&listener);
                 let mut header = [0u8; FRAME_HEADER_LENGTH];
                 conn.read_exact(&mut header).unwrap();
                 let len = u16::from_be_bytes([header[8], header[9]]) as usize;
