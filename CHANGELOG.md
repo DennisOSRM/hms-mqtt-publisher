@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/DennisOSRM/hms-mqtt-publisher/compare/v0.5.0...v0.5.1) - 2026-10-08
+
+### Added
+
+- configure performance mode and startup power limit ([#167](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/167))
+- support DTUs with encrypted local traffic ([#165](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/165))
+- publish MQTT availability with a last will ([#164](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/164))
+- set the power limit from Home Assistant and MQTT ([#163](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/163))
+- back off after stale readings ([#160](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/160))
+- publish total energy and DTU warnings ([#158](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/158))
+- publish three-phase inverters ([#156](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/156))
+- request real-time data like the vendor app ([#155](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/155))
+
+### Fixed
+
+- don't publish a power limit of 0 % before one is set ([#161](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/161))
+- *(addon)* use this repository's nightly image in the nightly add-on ([#159](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/159))
+- *(ci)* lowercase nightly image names and skip release branches ([#152](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/152))
+
+### Other
+
+- remove cruft, fix outdated comments and extend test coverage ([#168](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/168))
+- cover the polling loop ([#166](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/166))
+- refresh the README ([#162](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/162))
+- limit releases to code changes and pin the stable add-on to v0.5.0 ([#154](https://github.com/DennisOSRM/hms-mqtt-publisher/pull/154))
+
 ## [0.5.0](https://github.com/DennisOSRM/hms-mqtt-publisher/compare/v0.4...v0.5.0) - 2026-10-04
 
 ### Added
