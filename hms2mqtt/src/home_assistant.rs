@@ -749,6 +749,29 @@ mod tests {
     }
 
     #[test]
+    fn three_phase_power_limit_has_a_sensor_and_a_number_entity() {
+        let mut r = response("414312345678", 0, 4);
+        let mut inverter = ThreePhaseInverterState::new();
+        inverter.link = 1;
+        inverter.power_limit = 755;
+        r.three_phase_inverter_state.push(inverter);
+        assert_eq!(r.to_json_payload()["inv3_1_power_limit"], "75.5");
+
+        let sensors = r.create_sensor_configs("solar/hms_41431234/state", "41431234");
+        assert!(sensors
+            .iter()
+            .any(|c| c.unique_id == "hms_41431234_inv3_1_power_limit"));
+        let number = r
+            .create_power_limit_config("solar/hms_41431234/state", "set", "41431234")
+            .expect("number entity");
+        let number = serde_json::to_value(number).unwrap();
+        assert!(number["value_template"]
+            .as_str()
+            .unwrap()
+            .contains("inv3_1_power_limit"));
+    }
+
+    #[test]
     fn total_energy_is_the_sum_of_the_ports() {
         let mut r = response("414312345678", 1, 2);
         r.port_state[0].pv_energy_total = 922_613;

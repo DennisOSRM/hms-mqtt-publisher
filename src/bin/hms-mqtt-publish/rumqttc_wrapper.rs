@@ -229,6 +229,30 @@ mod tests {
     }
 
     #[test]
+    fn credentials_need_a_user_name() {
+        let credentials = |username: Option<&str>, password: Option<&str>| {
+            let config = MqttConfig {
+                username: username.map(str::to_owned),
+                password: password.map(str::to_owned),
+                ..config(None, None)
+            };
+            mqtt_options(&config, "-sm")
+                .credentials()
+                .map(|login| (login.username, login.password))
+        };
+        assert_eq!(credentials(None, None), None);
+        assert_eq!(credentials(None, Some("secret")), None);
+        assert_eq!(
+            credentials(Some("user"), None),
+            Some(("user".to_owned(), String::new()))
+        );
+        assert_eq!(
+            credentials(Some("user"), Some("secret")),
+            Some(("user".to_owned(), "secret".to_owned()))
+        );
+    }
+
+    #[test]
     fn tls_config_builds_with_the_compiled_crypto_provider() {
         // rustls >= 0.23 picks its crypto provider at runtime and panics here
         // if none or more than one is compiled in

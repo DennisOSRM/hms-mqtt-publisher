@@ -167,6 +167,8 @@ mod tests {
             derive_key(&[0_u8; 15]),
             Err(CryptoError::InvalidEncRandLength { actual: 15 })
         );
+        let error = derive_nonce(&[0_u8; 17], 0xa311, 7).unwrap_err();
+        assert_eq!(error.to_string(), "enc_rand must contain 16 bytes, got 17");
 
         let enc_rand = [0x24_u8; 16];
         let mut ciphertext =
