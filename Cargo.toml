@@ -1,6 +1,6 @@
 [package]
 name = "hms-mqtt-publish"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 # Not part of the published binary: changes here don't start a release (release-plz)
 exclude = [
