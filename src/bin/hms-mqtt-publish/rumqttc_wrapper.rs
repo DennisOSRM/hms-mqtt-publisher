@@ -147,10 +147,8 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         let (event_client, event_subscriptions) = (client.clone(), subscriptions.clone());
         let availability_topic = config.availability_topic.clone();
         thread::spawn(move || {
-            // keep polling the event loop to make sure outgoing messages get sent
-            // the call to .iter() blocks and suspends the thread effectively by
-            // calling .recv() under the hood. This implies that the loop terminates
-            // once the client unsubs
+            // polling the event loop sends outgoing messages and reconnects after errors;
+            // it blocks until the next event and runs for the lifetime of the process
             for event in connection.iter() {
                 match event {
                     Ok(Event::Incoming(Packet::Publish(publish))) => {

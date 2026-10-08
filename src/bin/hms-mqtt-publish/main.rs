@@ -1,4 +1,3 @@
-// TODO: support CA33 command to take over metrics consumption
 // TODO: support publishing to S-Miles cloud, too
 
 mod config;

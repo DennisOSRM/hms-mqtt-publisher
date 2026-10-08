@@ -38,7 +38,7 @@ fi
 if [[ "$UPDATE_INTERVAL" -lt 60500 ]]; then
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "The update_interval is set to a value lower than 60500."
-    echo "This is not recommended and may cause the inverter to become unresponsive."
+    echo "The inverter may then skip some of its uploads to the S-Miles cloud."
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 fi
 

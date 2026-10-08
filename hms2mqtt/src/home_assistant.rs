@@ -193,7 +193,7 @@ impl HMSStateResponse {
     }
 
     fn to_json_payload(&self) -> serde_json::Value {
-        // when modifying this function, modify the sensor config in create_device_config accordingly
+        // when modifying this function, modify create_sensor_configs accordingly
         let mut json = json!({
             "dtu_sn": self.dtu_sn,
             "pv_current_power": format!("{:.2}", self.pv_current_power as f32 * 0.1),
@@ -214,7 +214,7 @@ impl HMSStateResponse {
             json[format!("pv_{}_daily_yield", port.pv_port)] = port.pv_daily_yield.into();
             json[format!("pv_{}_code", port.pv_port)] = port.code.into();
         }
-        // Convert each InverterState to json (for a HMS-XXXW-2T, there is only one inverter)
+        // Convert each InverterState to json (HMS-XXXXW-xT models report one inverter)
         for inverter in self.inverter_state.iter() {
             json[format!("inv_{}_grid_voltage", inverter.port_id)] =
                 format!("{:.2}", inverter.grid_voltage as f32 * 0.1).into();

@@ -29,7 +29,7 @@ impl DeviceConfig {
 /// in the MQTT discovery protocol.
 ///
 /// More information about the MQTT discovery protocol can be found here:
-/// https://www.home-assistant.io/docs/mqtt/discovery/
+/// https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery
 ///
 /// More information about the Home assistant sensor entities can be found here:
 /// https://developers.home-assistant.io/docs/core/entity/sensor/
