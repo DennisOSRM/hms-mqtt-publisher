@@ -101,4 +101,4 @@ Please note: The tool does not come with any guarantees and if by chance you fry
 ## Known limitations
 - Fresh data is available about every 30 seconds. A request within about 30 seconds of the previous one gets the previous reading and restarts the DTU's countdown; after a few such requests the DTU stops reading the inverter for a while. The default interval of 30.5 s stays below that limit, readings marked as stale are skipped, and the publisher pauses for a minute or longer after a stale reading. Other clients polling the same inverter count against the same limit.
 - Developed and tested with an HMS-800W-2T. Other HMS models, DTUs and three-phase inverters use the same protocol but are untested; values of three-phase inverters assume the scaling of single-phase ones.
-- Encrypted telemetry uses the A311/RealDataNew protocol; legacy firmware continues to use A303/RealData.
+- Telemetry uses A311; encrypted DTUs return RealDataNew, while unencrypted DTUs return RealData. Other inverter models and firmware versions remain untested.

@@ -17,10 +17,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const INVERTER_PORT: u16 = 10081;
 const FRAME_HEADER_LENGTH: usize = 10;
 const GCM_TAG_LENGTH: usize = 16;
-const MAX_FRAME_LENGTH: usize = u16::MAX as usize;
+const MAX_FRAME_LENGTH: usize = FRAME_HEADER_LENGTH + 4096;
 const APP_INFO_COMMAND: u16 = 0xa301;
 const APP_INFO_REQUEST_COMMAND: u16 = 0xa201;
-const LEGACY_REAL_DATA_COMMAND: u16 = 0xa303;
 const REAL_DATA_NEW_COMMAND: u16 = 0xa311;
 const WARNINGS_REQUEST_COMMAND: u16 = 0xa304;
 const COMMAND_RES_COMMAND: u16 = 0xa305;
@@ -49,6 +48,7 @@ pub struct Inverter<'a> {
     port: u16,
     state: NetworkState,
     sequence: u16,
+    page_delay: Duration,
     last_reading_stale: bool,
     capabilities: Option<Capabilities>,
     enable_performance_mode: bool,
@@ -109,6 +109,7 @@ impl<'a> Inverter<'a> {
             port,
             state: NetworkState::Unknown,
             sequence: 0_u16,
+            page_delay: Duration::from_secs(1),
             last_reading_stale: false,
             capabilities: None,
             enable_performance_mode,
@@ -271,7 +272,7 @@ impl<'a> Inverter<'a> {
         if capabilities.encrypted {
             self.request_real_data_new(&capabilities)
         } else {
-            self.request_legacy_real_data(&capabilities)
+            self.request_plain_real_data()
         }
     }
 
@@ -342,7 +343,7 @@ impl<'a> Inverter<'a> {
             if page >= payload.page_count.clamp(1, MAX_PAGES) {
                 return Some(warnings);
             }
-            std::thread::sleep(Duration::from_secs(1));
+            std::thread::sleep(self.page_delay);
         }
     }
 
@@ -376,28 +377,37 @@ impl<'a> Inverter<'a> {
             .context("invalid Hoymiles command response protobuf")
     }
 
-    fn request_legacy_real_data(
-        &mut self,
-        capabilities: &Capabilities,
-    ) -> Result<HMSStateResponse> {
-        let request = build_legacy_request()?;
-        let payload = self.send_request(
-            LEGACY_REAL_DATA_COMMAND,
-            &request,
-            false,
-            &[
-                LEGACY_REAL_DATA_COMMAND,
-                response_command(LEGACY_REAL_DATA_COMMAND),
-            ],
-        )?;
-        let response = HMSStateResponse::parse_from_bytes(&payload)
-            .context("invalid legacy RealData protobuf")?;
-        if response.dtu_sn.is_empty() && capabilities.dtu_serial_number.is_empty() {
-            return Err(anyhow!(
-                "legacy telemetry did not contain a DTU serial number"
-            ));
+    fn request_plain_real_data(&mut self) -> Result<HMSStateResponse> {
+        let mut response = self.request_plain_real_data_page(0)?;
+        let pages = response.page_count.clamp(1, MAX_PAGES);
+        for page in 1..pages {
+            std::thread::sleep(self.page_delay);
+            let next = self.request_plain_real_data_page(page)?;
+            response.inverter_state.extend(next.inverter_state);
+            response
+                .three_phase_inverter_state
+                .extend(next.three_phase_inverter_state);
+            response.port_state.extend(next.port_state);
         }
         Ok(response)
+    }
+
+    fn request_plain_real_data_page(&mut self, page: i32) -> Result<HMSStateResponse> {
+        let now = Local::now();
+        let request = RealDataResDTO {
+            ymd_hms: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+            cp: page,
+            offset: now.offset().local_minus_utc(),
+            time: now.timestamp() as i32,
+            ..Default::default()
+        };
+        let payload = self.send_request(
+            REAL_DATA_NEW_COMMAND,
+            &request.write_to_bytes()?,
+            false,
+            &[response_command(REAL_DATA_NEW_COMMAND)],
+        )?;
+        HMSStateResponse::parse_from_bytes(&payload).context("invalid RealData protobuf")
     }
 
     fn request_real_data_new(&mut self, capabilities: &Capabilities) -> Result<HMSStateResponse> {
@@ -410,6 +420,7 @@ impl<'a> Inverter<'a> {
         let package_count = combined.ap.clamp(1, MAX_PAGES);
 
         for package in 1..package_count {
+            std::thread::sleep(self.page_delay);
             request = build_real_data_new_request(package)?;
             let response = self.request_real_data_new_page(&request)?;
             combined
@@ -561,6 +572,8 @@ fn is_authentication_failure(error: &anyhow::Error) -> bool {
 fn response_command(request_command: u16) -> u16 {
     (request_command & 0x00ff) | 0xa200
 }
+#[cfg(test)]
+pub(crate) const HEADER_LEN: usize = 10;
 
 fn build_application_info_request() -> Result<Vec<u8>> {
     let request = APPInfoDataResDTO {
@@ -572,18 +585,6 @@ fn build_application_info_request() -> Result<Vec<u8>> {
     request
         .write_to_bytes()
         .context("unable to serialize Application Information request")
-}
-
-fn build_legacy_request() -> Result<Vec<u8>> {
-    let request = RealDataResDTO {
-        ymd_hms: current_time_string(),
-        offset: 28_800,
-        time: unix_timestamp()? as i32,
-        ..Default::default()
-    };
-    request
-        .write_to_bytes()
-        .context("unable to serialize legacy RealData request")
 }
 
 fn build_real_data_new_request(package: i32) -> Result<RealDataNewResDTO> {
@@ -628,6 +629,12 @@ fn validate_command_response(response: &CommandReqDTO, action: i32) -> Result<()
         ));
     }
     if response.err_code != 0 {
+        if action == ACTION_LIMIT_POWER {
+            return Err(anyhow!(
+                "DTU rejected the power limit (error {})",
+                response.err_code
+            ));
+        }
         return Err(anyhow!(
             "Hoymiles command action {action} failed with error code {}",
             response.err_code
@@ -861,19 +868,283 @@ pub fn is_stale(response: &HMSStateResponse) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_frame, build_performance_data_mode_request, build_power_limit_request,
-        map_real_data_new, read_response, Capabilities, COMMAND_RES_COMMAND,
-        LEGACY_REAL_DATA_COMMAND,
-    };
+    use super::*;
     use crate::protos::hoymiles::{
         CommandPB::CommandResDTO,
-        RealData::{HMSStateResponse, InverterState, ThreePhaseInverterState},
+        RealData::{
+            CommandRequest, CommandResponse, HMSStateResponse, InverterState, PortState,
+            ThreePhaseInverterState,
+        },
         RealDataNew::{PvMO, RealDataNewReqDTO, SGSMO},
     };
+    use crate::test_support::{fake_dtu, reply_to};
     use crc16::{State, MODBUS};
     use protobuf::Message;
     use std::io::{self, Read};
+
+    fn response_with_links(links: &[i32]) -> HMSStateResponse {
+        let mut response = HMSStateResponse::new();
+        for &link in links {
+            let mut inverter = InverterState::new();
+            inverter.link = link;
+            response.inverter_state.push(inverter);
+        }
+        response
+    }
+
+    #[test]
+    fn linked_inverter_is_fresh() {
+        assert!(!is_stale(&response_with_links(&[1])));
+    }
+
+    #[test]
+    fn one_linked_inverter_is_enough() {
+        assert!(!is_stale(&response_with_links(&[0, 1])));
+    }
+
+    #[test]
+    fn unlinked_inverters_are_stale() {
+        assert!(is_stale(&response_with_links(&[0])));
+        assert!(is_stale(&response_with_links(&[0, 0])));
+    }
+
+    #[test]
+    fn update_state_returns_fresh_reading_and_sends_valid_request() {
+        let mut fresh = response_with_links(&[1]);
+        fresh.dtu_sn = "414312345678".to_string();
+        let (port, dtu) = fake_dtu(vec![
+            Box::new({
+                let fresh = fresh.clone();
+                move |req| reply_to(req, &fresh)
+            }),
+            Box::new(move |req| reply_to(req, &fresh)),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert_eq!(inverter.state(), NetworkState::Unknown);
+
+        let reading = inverter.update_state().expect("fresh reading");
+        assert_eq!(reading.dtu_sn, "414312345678");
+        assert_eq!(inverter.state(), NetworkState::Online);
+        assert!(inverter.update_state().is_some());
+
+        let requests = dtu.join().unwrap();
+        for (i, request) in requests.iter().enumerate() {
+            assert_eq!(&request[0..4], b"HM\xa3\x11");
+            let body = RealDataResDTO::parse_from_bytes(&request[HEADER_LEN..]).unwrap();
+            assert_eq!(body.cp, 0);
+            assert!((body.time as i64 - Local::now().timestamp()).abs() < 60);
+            assert_eq!(body.ymd_hms.len(), "2026-01-01 12:00:00".len());
+            assert_eq!(body.offset, Local::now().offset().local_minus_utc());
+            // Application Information uses sequence 1; telemetry starts at 2.
+            assert_eq!(u16::from_be_bytes([request[4], request[5]]), i as u16 + 2);
+            let payload = &request[HEADER_LEN..];
+            assert_eq!(
+                u16::from_be_bytes([request[6], request[7]]),
+                State::<MODBUS>::calculate(payload)
+            );
+            assert_eq!(
+                u16::from_be_bytes([request[8], request[9]]) as usize,
+                request.len()
+            );
+        }
+    }
+
+    /// A reply with `inverters` linked inverters with 2 ports each, as page `page` of `pages`
+    fn page(dtu_sn: &str, pages: i32, page: i32, inverters: i64) -> HMSStateResponse {
+        let mut response = response_with_links(&vec![1; inverters as usize]);
+        response.dtu_sn = dtu_sn.to_string();
+        response.page_count = pages;
+        response.page = page;
+        for (n, inverter) in response.inverter_state.iter_mut().enumerate() {
+            inverter.inv_id = 100 * page as i64 + n as i64;
+        }
+        for _ in 0..2 * inverters {
+            response.port_state.push(PortState::new());
+        }
+        response
+    }
+
+    #[test]
+    fn update_state_requests_and_merges_all_pages() {
+        let (port, dtu) = fake_dtu(vec![
+            Box::new(|req| reply_to(req, &page("dtu", 2, 0, 2))),
+            Box::new(|req| reply_to(req, &page("dtu", 2, 1, 1))),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        inverter.page_delay = Duration::ZERO;
+
+        let reading = inverter.update_state().expect("fresh reading");
+        let ids: Vec<i64> = reading.inverter_state.iter().map(|i| i.inv_id).collect();
+        assert_eq!(ids, [0, 1, 100]);
+        assert_eq!(reading.port_state.len(), 6);
+
+        let requests = dtu.join().unwrap();
+        let pages: Vec<i32> = requests
+            .iter()
+            .map(|r| {
+                RealDataResDTO::parse_from_bytes(&r[HEADER_LEN..])
+                    .unwrap()
+                    .cp
+            })
+            .collect();
+        assert_eq!(pages, [0, 1]);
+    }
+
+    #[test]
+    fn update_state_fails_if_a_page_is_missing() {
+        let (port, dtu) = fake_dtu(vec![
+            Box::new(|req| reply_to(req, &page("dtu", 2, 0, 1))),
+            Box::new(|_| Vec::new()),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        inverter.page_delay = Duration::ZERO;
+        assert!(inverter.update_state().is_none());
+        assert_eq!(inverter.state(), NetworkState::Offline);
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn fetch_warnings_requests_all_pages() {
+        let warnings_page = |page: i32| {
+            move |req: &[u8]| {
+                assert_eq!(&req[0..4], b"HM\xa3\x04");
+                let request = WarningsRequest::parse_from_bytes(&req[HEADER_LEN..]).unwrap();
+                assert_eq!(request.page, page);
+                let mut response = WarningsResponse::new();
+                response.page_count = 2;
+                response.page = page;
+                let mut warning = Warning::new();
+                warning.code = 100 + page;
+                response.warnings.push(warning);
+                let payload = response.write_to_bytes().unwrap();
+                let mut f = b"HM\xa2\x04".to_vec();
+                f.extend_from_slice(&req[4..6]);
+                f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
+                f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
+                f.extend_from_slice(&payload);
+                f
+            }
+        };
+        let (port, dtu) = fake_dtu(vec![Box::new(warnings_page(0)), Box::new(warnings_page(1))]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        inverter.page_delay = Duration::ZERO;
+        let codes: Vec<i32> = inverter
+            .fetch_warnings()
+            .expect("warnings")
+            .iter()
+            .map(|w| w.code)
+            .collect();
+        assert_eq!(codes, [100, 101]);
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn fetch_warnings_fails_gracefully() {
+        let (port, dtu) = fake_dtu(vec![Box::new(|_| Vec::new())]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert!(inverter.fetch_warnings().is_none());
+        dtu.join().unwrap();
+    }
+
+    /// A DTU reply to a command request with the given error code
+    fn command_reply(req: &[u8], err_code: i32) -> Vec<u8> {
+        let mut response = CommandResponse::new();
+        response.err_code = err_code;
+        response.action = 8;
+        let payload = response.write_to_bytes().unwrap();
+        let mut f = b"HM\xa2\x05".to_vec();
+        f.extend_from_slice(&req[4..6]);
+        f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
+        f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
+        f.extend_from_slice(&payload);
+        f
+    }
+
+    #[test]
+    fn set_power_limit_sends_the_command_of_the_vendor_app() {
+        let (port, dtu) = fake_dtu(vec![
+            Box::new(|req| command_reply(req, 0)),
+            Box::new(|req| command_reply(req, 1)),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert_eq!(inverter.set_power_limit(55), Ok(()));
+        assert!(inverter
+            .set_power_limit(55)
+            .unwrap_err()
+            .contains("rejected"));
+
+        let requests = dtu.join().unwrap();
+        assert_eq!(&requests[0][0..4], b"HM\xa3\x05");
+        let command = CommandRequest::parse_from_bytes(&requests[0][HEADER_LEN..]).unwrap();
+        assert_eq!(command.action, 8);
+        assert_eq!(command.dev_kind, 0);
+        assert_eq!(command.package_nub, 1);
+        assert_eq!(command.data, b"A:550,B:0,C:0\r");
+        assert_eq!(command.tid, command.time as i64);
+    }
+
+    #[test]
+    fn update_state_skips_stale_reading() {
+        let stale = response_with_links(&[0]);
+        let (port, dtu) = fake_dtu(vec![Box::new(move |req| reply_to(req, &stale))]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert!(inverter.update_state().is_none());
+        assert_ne!(inverter.state(), NetworkState::Online);
+        assert!(inverter.last_reading_stale());
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn update_state_handles_bad_replies_without_panicking() {
+        let fresh = response_with_links(&[1]);
+        let (port, dtu) = fake_dtu(vec![
+            // closes the connection without answering
+            Box::new(|_| Vec::new()),
+            // too short to be a frame
+            Box::new(|_| b"HM\xa2".to_vec()),
+            // valid frame, wrong sequence number
+            Box::new(move |req| {
+                let mut f = reply_to(req, &fresh);
+                f[5] ^= 0xff;
+                f
+            }),
+            // valid header, payload is not protobuf
+            Box::new(|req| {
+                let payload = [0xffu8; 4];
+                let mut f = b"HM\xa2\x11".to_vec();
+                f.extend_from_slice(&req[4..6]);
+                f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
+                f.extend_from_slice(&(HEADER_LEN as u16 + 4).to_be_bytes());
+                f.extend_from_slice(&payload);
+                f
+            }),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        for _ in 0..4 {
+            assert!(inverter.update_state().is_none());
+            assert_eq!(inverter.state(), NetworkState::Offline);
+        }
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn update_state_marks_unreachable_inverter_offline() {
+        // bind and drop a listener to get a local port nobody listens on
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert!(inverter.update_state().is_none());
+        assert_eq!(inverter.state(), NetworkState::Offline);
+    }
+
+    #[test]
+    fn update_state_rejects_unresolvable_host() {
+        let mut inverter = Inverter::with_port("host.invalid", 10081);
+        assert!(inverter.update_state().is_none());
+    }
 
     struct PartialReader {
         data: Vec<u8>,
@@ -898,39 +1169,27 @@ mod tests {
 
     #[test]
     fn reads_plain_frames_across_partial_tcp_reads() {
-        let frame = build_frame(
-            LEGACY_REAL_DATA_COMMAND,
-            9,
-            b"synthetic protobuf",
-            false,
-            None,
-        )
-        .expect("frame builds");
+        let frame = build_frame(REAL_DATA_NEW_COMMAND, 9, b"synthetic protobuf", false, None)
+            .expect("frame builds");
         let mut reader = PartialReader {
             data: frame,
             position: 0,
             chunk_size: 2,
         };
 
-        let payload = read_response(&mut reader, 9, false, None, &[LEGACY_REAL_DATA_COMMAND])
+        let payload = read_response(&mut reader, 9, false, None, &[REAL_DATA_NEW_COMMAND])
             .expect("frame reads");
         assert_eq!(payload, b"synthetic protobuf");
     }
 
     #[test]
     fn rejects_invalid_crc_before_parsing() {
-        let mut frame = build_frame(
-            LEGACY_REAL_DATA_COMMAND,
-            9,
-            b"synthetic protobuf",
-            false,
-            None,
-        )
-        .expect("frame builds");
+        let mut frame = build_frame(REAL_DATA_NEW_COMMAND, 9, b"synthetic protobuf", false, None)
+            .expect("frame builds");
         frame[10] ^= 1;
         let mut reader = io::Cursor::new(frame);
 
-        let error = read_response(&mut reader, 9, false, None, &[LEGACY_REAL_DATA_COMMAND])
+        let error = read_response(&mut reader, 9, false, None, &[REAL_DATA_NEW_COMMAND])
             .expect_err("CRC mismatch must fail");
         assert!(error.to_string().contains("CRC mismatch"));
     }
