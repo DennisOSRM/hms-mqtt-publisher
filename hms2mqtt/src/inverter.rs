@@ -1,3 +1,4 @@
+use crate::command::POWER_LIMIT_RANGE;
 use crate::crypto::{self, CryptoError};
 use crate::protos::hoymiles::{
     APPInfomationData::{APPInfoDataReqDTO, APPInfoDataResDTO},
@@ -15,7 +16,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const INVERTER_PORT: u16 = 10081;
-const FRAME_HEADER_LENGTH: usize = 10;
+pub(crate) const FRAME_HEADER_LENGTH: usize = 10;
 const GCM_TAG_LENGTH: usize = 16;
 const MAX_FRAME_LENGTH: usize = FRAME_HEADER_LENGTH + 4096;
 const APP_INFO_COMMAND: u16 = 0xa301;
@@ -27,8 +28,11 @@ const ENCRYPTION_FLAG_BIT: i64 = 25;
 const ACTION_LIMIT_POWER: i32 = 8;
 const ACTION_PERFORMANCE_DATA_MODE: i32 = 33;
 const MAX_PAGES: i32 = 16;
+/// UTC offset in seconds sent with Application Information and RealDataNew requests: a fixed
+/// UTC+8, as the hoymiles-wifi library sends it
+const FIXED_UTC_OFFSET: i32 = 28_800;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkState {
     Unknown,
     Online,
@@ -62,25 +66,7 @@ struct StartupCommandState {
     power_limit_initialized: bool,
 }
 
-impl StartupCommandState {
-    fn mark_performance_mode_initialized(&mut self) {
-        self.performance_mode_initialized = true;
-    }
-
-    fn mark_power_limit_initialized(&mut self) {
-        self.power_limit_initialized = true;
-    }
-
-    fn reset_performance_mode(&mut self) {
-        self.performance_mode_initialized = false;
-    }
-}
-
 impl<'a> Inverter<'a> {
-    pub fn new(host: &'a str) -> Self {
-        Self::with_port_and_options(host, INVERTER_PORT, false, None)
-    }
-
     pub fn with_port(host: &'a str, port: u16) -> Self {
         Self::with_port_and_options(host, port, false, None)
     }
@@ -144,16 +130,8 @@ impl<'a> Inverter<'a> {
         }
         self.initialize_startup_commands();
 
-        match self.request_telemetry() {
-            Ok(response) => {
-                if is_stale(&response) {
-                    warn!("DTU reports no inverter link (link == 0), skipping stale reading");
-                    self.last_reading_stale = true;
-                    return None;
-                }
-                self.set_state(NetworkState::Online);
-                Some(response)
-            }
+        let response = match self.request_telemetry() {
+            Ok(response) => response,
             Err(error) if is_authentication_failure(&error) => {
                 warn!("Telemetry authentication failed; refreshing application information once");
                 self.capabilities = None;
@@ -162,34 +140,32 @@ impl<'a> Inverter<'a> {
                     self.set_state(NetworkState::Offline);
                     return None;
                 }
-                self.startup_command_state.reset_performance_mode();
+                // the DTU may have restarted, which ends its performance mode
+                self.startup_command_state.performance_mode_initialized = false;
                 self.initialize_startup_commands();
 
                 match self.request_telemetry() {
-                    Ok(response) => {
-                        if is_stale(&response) {
-                            warn!(
-                                "DTU reports no inverter link (link == 0), skipping stale reading"
-                            );
-                            self.last_reading_stale = true;
-                            return None;
-                        }
-                        self.set_state(NetworkState::Online);
-                        Some(response)
-                    }
+                    Ok(response) => response,
                     Err(retry_error) => {
                         error!("Unable to read inverter telemetry after reinitialization: {retry_error:#}");
                         self.set_state(NetworkState::Offline);
-                        None
+                        return None;
                     }
                 }
             }
             Err(error) => {
                 error!("Unable to read inverter telemetry: {error:#}");
                 self.set_state(NetworkState::Offline);
-                None
+                return None;
             }
+        };
+        if is_stale(&response) {
+            warn!("DTU reports no inverter link (link == 0), skipping stale reading");
+            self.last_reading_stale = true;
+            return None;
         }
+        self.set_state(NetworkState::Online);
+        Some(response)
     }
 
     fn initialize_startup_commands(&mut self) {
@@ -200,8 +176,7 @@ impl<'a> Inverter<'a> {
                 Ok(()) => info!("Performance data mode enabled"),
                 Err(error) => warn!("Unable to enable performance data mode: {error:#}"),
             }
-            self.startup_command_state
-                .mark_performance_mode_initialized();
+            self.startup_command_state.performance_mode_initialized = true;
         }
 
         if let Some(power_limit) = self.initialize_power_limit {
@@ -211,7 +186,7 @@ impl<'a> Inverter<'a> {
                     Ok(()) => info!("Power limit initialized successfully"),
                     Err(error) => warn!("Unable to initialize inverter power limit: {error:#}"),
                 }
-                self.startup_command_state.mark_power_limit_initialized();
+                self.startup_command_state.power_limit_initialized = true;
             }
         }
     }
@@ -277,17 +252,20 @@ impl<'a> Inverter<'a> {
     }
 
     fn enable_performance_data_mode(&mut self) -> Result<()> {
-        let request = build_performance_data_mode_request(unix_timestamp_i32()?)?;
+        let request = build_performance_data_mode_request(unix_timestamp_i32()?);
         let response = self.send_command(request)?;
         validate_command_response(&response, ACTION_PERFORMANCE_DATA_MODE)
     }
 
     pub fn set_power_limit(&mut self, percent: u32) -> std::result::Result<(), String> {
-        if percent > 100 {
-            return Err("power limit must be between 0 and 100 percent".to_owned());
+        if !POWER_LIMIT_RANGE.contains(&percent) {
+            return Err(format!(
+                "power limit must be between {} and {} %, got {percent}",
+                POWER_LIMIT_RANGE.start(),
+                POWER_LIMIT_RANGE.end()
+            ));
         }
-        let percent = u8::try_from(percent)
-            .map_err(|_| "power limit must be between 0 and 100 percent".to_owned())?;
+        let percent = percent as u8;
         self.ensure_capabilities()
             .and_then(|()| self.set_power_limit_command(percent))
             .map_err(|error| error.to_string())
@@ -356,7 +334,7 @@ impl<'a> Inverter<'a> {
 
     fn set_power_limit_command(&mut self, percent: u8) -> Result<()> {
         let timestamp = unix_timestamp_i32()?;
-        let request = build_power_limit_request(percent, timestamp)?;
+        let request = build_power_limit_request(percent, timestamp);
         let response = self.send_command(request)?;
         validate_command_response(&response, ACTION_LIMIT_POWER)
     }
@@ -572,13 +550,11 @@ fn is_authentication_failure(error: &anyhow::Error) -> bool {
 fn response_command(request_command: u16) -> u16 {
     (request_command & 0x00ff) | 0xa200
 }
-#[cfg(test)]
-pub(crate) const HEADER_LEN: usize = 10;
 
 fn build_application_info_request() -> Result<Vec<u8>> {
     let request = APPInfoDataResDTO {
         time_ymd_hms: current_time_string().into_bytes(),
-        offset: 28_800,
+        offset: FIXED_UTC_OFFSET,
         time: unix_timestamp()?,
         ..Default::default()
     };
@@ -590,35 +566,31 @@ fn build_application_info_request() -> Result<Vec<u8>> {
 fn build_real_data_new_request(package: i32) -> Result<RealDataNewResDTO> {
     Ok(RealDataNewResDTO {
         time_ymd_hms: current_time_string().into_bytes(),
-        offset: 28_800,
+        offset: FIXED_UTC_OFFSET,
         time: unix_timestamp()? as i32,
         cp: package,
         ..Default::default()
     })
 }
 
-fn build_power_limit_request(percent: u8, timestamp: i32) -> Result<CommandResDTO> {
-    if percent > 100 {
-        return Err(anyhow!("power limit must be between 0 and 100 percent"));
-    }
-
-    Ok(CommandResDTO {
+fn build_power_limit_request(percent: u8, timestamp: i32) -> CommandResDTO {
+    CommandResDTO {
         time: timestamp,
         action: ACTION_LIMIT_POWER,
         package_nub: 1,
         tid: i64::from(timestamp),
         data: format!("A:{},B:0,C:0\r", i32::from(percent) * 10),
         ..Default::default()
-    })
+    }
 }
 
-fn build_performance_data_mode_request(timestamp: i32) -> Result<CommandResDTO> {
-    Ok(CommandResDTO {
+fn build_performance_data_mode_request(timestamp: i32) -> CommandResDTO {
+    CommandResDTO {
         time: timestamp,
         action: ACTION_PERFORMANCE_DATA_MODE,
         package_nub: 1,
         ..Default::default()
-    })
+    }
 }
 
 fn validate_command_response(response: &CommandReqDTO, action: i32) -> Result<()> {
@@ -772,13 +744,11 @@ fn read_response<R: Read>(
     }
 }
 
-fn checked_u64_to_i32(value: u64, field: &str) -> Result<i32> {
-    value
-        .try_into()
-        .with_context(|| format!("{field} does not fit into the legacy data model: {value}"))
-}
-
-fn checked_usize_to_i32(value: usize, field: &str) -> Result<i32> {
+fn checked_i32<T>(value: T, field: &str) -> Result<i32>
+where
+    T: TryInto<i32> + Copy + std::fmt::Display,
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
     value
         .try_into()
         .with_context(|| format!("{field} does not fit into the legacy data model: {value}"))
@@ -810,15 +780,15 @@ fn map_real_data_new(
         page_count: response.ap,
         page: response.cp,
         version: response.firmware_version,
-        pv_current_power: checked_u64_to_i32(response.dtu_power, "dtu_power")?,
-        pv_daily_yield: checked_u64_to_i32(response.dtu_daily_energy, "dtu_daily_energy")?,
+        pv_current_power: checked_i32(response.dtu_power, "dtu_power")?,
+        pv_daily_yield: checked_i32(response.dtu_daily_energy, "dtu_daily_energy")?,
         ..Default::default()
     };
 
     for (index, sgs) in response.sgs_data.iter().enumerate() {
         let inverter = crate::protos::hoymiles::RealData::InverterState {
             inv_id: sgs.serial_number,
-            port_id: checked_usize_to_i32(index + 1, "inverter index")?,
+            port_id: checked_i32(index + 1, "inverter index")?,
             grid_voltage: sgs.voltage,
             grid_freq: sgs.frequency,
             pv_current_power: sgs.active_power,
@@ -871,13 +841,10 @@ mod tests {
     use super::*;
     use crate::protos::hoymiles::{
         CommandPB::CommandResDTO,
-        RealData::{
-            CommandRequest, CommandResponse, HMSStateResponse, InverterState, PortState,
-            ThreePhaseInverterState,
-        },
+        RealData::{HMSStateResponse, InverterState, PortState, ThreePhaseInverterState},
         RealDataNew::{PvMO, RealDataNewReqDTO, SGSMO},
     };
-    use crate::test_support::{fake_dtu, reply_to};
+    use crate::test_support::{fake_dtu, frame_reply, reply_to};
     use crc16::{State, MODBUS};
     use protobuf::Message;
     use std::io::{self, Read};
@@ -890,22 +857,6 @@ mod tests {
             response.inverter_state.push(inverter);
         }
         response
-    }
-
-    #[test]
-    fn linked_inverter_is_fresh() {
-        assert!(!is_stale(&response_with_links(&[1])));
-    }
-
-    #[test]
-    fn one_linked_inverter_is_enough() {
-        assert!(!is_stale(&response_with_links(&[0, 1])));
-    }
-
-    #[test]
-    fn unlinked_inverters_are_stale() {
-        assert!(is_stale(&response_with_links(&[0])));
-        assert!(is_stale(&response_with_links(&[0, 0])));
     }
 
     #[test]
@@ -930,14 +881,14 @@ mod tests {
         let requests = dtu.join().unwrap();
         for (i, request) in requests.iter().enumerate() {
             assert_eq!(&request[0..4], b"HM\xa3\x11");
-            let body = RealDataResDTO::parse_from_bytes(&request[HEADER_LEN..]).unwrap();
+            let body = RealDataResDTO::parse_from_bytes(&request[FRAME_HEADER_LENGTH..]).unwrap();
             assert_eq!(body.cp, 0);
             assert!((body.time as i64 - Local::now().timestamp()).abs() < 60);
             assert_eq!(body.ymd_hms.len(), "2026-01-01 12:00:00".len());
             assert_eq!(body.offset, Local::now().offset().local_minus_utc());
             // Application Information uses sequence 1; telemetry starts at 2.
             assert_eq!(u16::from_be_bytes([request[4], request[5]]), i as u16 + 2);
-            let payload = &request[HEADER_LEN..];
+            let payload = &request[FRAME_HEADER_LENGTH..];
             assert_eq!(
                 u16::from_be_bytes([request[6], request[7]]),
                 State::<MODBUS>::calculate(payload)
@@ -982,7 +933,7 @@ mod tests {
         let pages: Vec<i32> = requests
             .iter()
             .map(|r| {
-                RealDataResDTO::parse_from_bytes(&r[HEADER_LEN..])
+                RealDataResDTO::parse_from_bytes(&r[FRAME_HEADER_LENGTH..])
                     .unwrap()
                     .cp
             })
@@ -1008,7 +959,8 @@ mod tests {
         let warnings_page = |page: i32| {
             move |req: &[u8]| {
                 assert_eq!(&req[0..4], b"HM\xa3\x04");
-                let request = WarningsRequest::parse_from_bytes(&req[HEADER_LEN..]).unwrap();
+                let request =
+                    WarningsRequest::parse_from_bytes(&req[FRAME_HEADER_LENGTH..]).unwrap();
                 assert_eq!(request.page, page);
                 let mut response = WarningsResponse::new();
                 response.page_count = 2;
@@ -1016,13 +968,7 @@ mod tests {
                 let mut warning = Warning::new();
                 warning.code = 100 + page;
                 response.warnings.push(warning);
-                let payload = response.write_to_bytes().unwrap();
-                let mut f = b"HM\xa2\x04".to_vec();
-                f.extend_from_slice(&req[4..6]);
-                f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
-                f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
-                f.extend_from_slice(&payload);
-                f
+                frame_reply(req, 0xa204, &response.write_to_bytes().unwrap())
             }
         };
         let (port, dtu) = fake_dtu(vec![Box::new(warnings_page(0)), Box::new(warnings_page(1))]);
@@ -1046,20 +992,6 @@ mod tests {
         dtu.join().unwrap();
     }
 
-    /// A DTU reply to a command request with the given error code
-    fn command_reply(req: &[u8], err_code: i32) -> Vec<u8> {
-        let mut response = CommandResponse::new();
-        response.err_code = err_code;
-        response.action = 8;
-        let payload = response.write_to_bytes().unwrap();
-        let mut f = b"HM\xa2\x05".to_vec();
-        f.extend_from_slice(&req[4..6]);
-        f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
-        f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
-        f.extend_from_slice(&payload);
-        f
-    }
-
     /// A command reply (0xA205) for `action` with error code `err_code`
     fn command_reply_for(req: &[u8], action: i32, err_code: i32) -> Vec<u8> {
         let response = CommandReqDTO {
@@ -1067,7 +999,7 @@ mod tests {
             err_code,
             ..Default::default()
         };
-        crate::test_support::frame_reply(req, 0xa205, &response.write_to_bytes().unwrap())
+        frame_reply(req, 0xa205, &response.write_to_bytes().unwrap())
     }
 
     fn fresh_reading() -> HMSStateResponse {
@@ -1104,10 +1036,10 @@ mod tests {
             // reply without DTU information
             Box::new(|req| {
                 let response = crate::protos::hoymiles::APPInfomationData::APPInfoDataReqDTO::new();
-                crate::test_support::frame_reply(req, 0xa201, &response.write_to_bytes().unwrap())
+                frame_reply(req, 0xa201, &response.write_to_bytes().unwrap())
             }),
             // garbage instead of protobuf
-            Box::new(|req| crate::test_support::frame_reply(req, 0xa201, &[0xff; 4])),
+            Box::new(|req| frame_reply(req, 0xa201, &[0xff; 4])),
             // closes the connection without answering
             Box::new(|_| Vec::new()),
             Box::new(|req| crate::test_support::app_info_reply(req, 770)),
@@ -1145,9 +1077,10 @@ mod tests {
             commands(&requests),
             [0xa301, 0xa305, 0xa305, 0xa311, 0xa311]
         );
-        let performance = CommandResDTO::parse_from_bytes(&requests[1][HEADER_LEN..]).unwrap();
+        let performance =
+            CommandResDTO::parse_from_bytes(&requests[1][FRAME_HEADER_LENGTH..]).unwrap();
         assert_eq!(performance.action, 33);
-        let limit = CommandResDTO::parse_from_bytes(&requests[2][HEADER_LEN..]).unwrap();
+        let limit = CommandResDTO::parse_from_bytes(&requests[2][FRAME_HEADER_LENGTH..]).unwrap();
         assert_eq!(limit.action, 8);
         assert_eq!(limit.data, "A:800,B:0,C:0\r");
     }
@@ -1185,8 +1118,8 @@ mod tests {
     #[test]
     fn set_power_limit_sends_the_command_of_the_vendor_app() {
         let (port, dtu) = fake_dtu(vec![
-            Box::new(|req| command_reply(req, 0)),
-            Box::new(|req| command_reply(req, 1)),
+            Box::new(|req| command_reply_for(req, 8, 0)),
+            Box::new(|req| command_reply_for(req, 8, 1)),
         ]);
         let mut inverter = Inverter::with_port("127.0.0.1", port);
         assert_eq!(inverter.set_power_limit(55), Ok(()));
@@ -1197,11 +1130,11 @@ mod tests {
 
         let requests = dtu.join().unwrap();
         assert_eq!(&requests[0][0..4], b"HM\xa3\x05");
-        let command = CommandRequest::parse_from_bytes(&requests[0][HEADER_LEN..]).unwrap();
+        let command = CommandResDTO::parse_from_bytes(&requests[0][FRAME_HEADER_LENGTH..]).unwrap();
         assert_eq!(command.action, 8);
         assert_eq!(command.dev_kind, 0);
         assert_eq!(command.package_nub, 1);
-        assert_eq!(command.data, b"A:550,B:0,C:0\r");
+        assert_eq!(command.data, "A:550,B:0,C:0\r");
         assert_eq!(command.tid, command.time as i64);
     }
 
@@ -1231,15 +1164,7 @@ mod tests {
                 f
             }),
             // valid header, payload is not protobuf
-            Box::new(|req| {
-                let payload = [0xffu8; 4];
-                let mut f = b"HM\xa2\x11".to_vec();
-                f.extend_from_slice(&req[4..6]);
-                f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
-                f.extend_from_slice(&(HEADER_LEN as u16 + 4).to_be_bytes());
-                f.extend_from_slice(&payload);
-                f
-            }),
+            Box::new(|req| frame_reply(req, 0xa211, &[0xff; 4])),
         ]);
         let mut inverter = Inverter::with_port("127.0.0.1", port);
         for _ in 0..4 {
@@ -1412,6 +1337,9 @@ mod tests {
 
     #[test]
     fn stale_detection_checks_single_and_three_phase_inverters() {
+        assert!(!is_stale(&response_with_links(&[0, 1])));
+        assert!(is_stale(&response_with_links(&[0, 0])));
+
         let mut response = HMSStateResponse::new();
         assert!(super::is_stale(&response));
 
@@ -1429,14 +1357,19 @@ mod tests {
     }
 
     #[test]
-    fn public_power_limit_rejects_values_over_one_hundred_without_connecting() {
-        let mut inverter = super::Inverter::new("localhost");
-        assert!(inverter.set_power_limit(101).is_err());
+    fn power_limit_outside_the_range_is_rejected_without_connecting() {
+        let mut inverter = Inverter::with_port("host.invalid", 10081);
+        for percent in [0, 1, 101] {
+            assert!(inverter
+                .set_power_limit(percent)
+                .unwrap_err()
+                .contains("between 2 and 100"));
+        }
     }
 
     #[test]
     fn serializes_performance_data_mode_request() {
-        let request = build_performance_data_mode_request(1_789_712_893).expect("request builds");
+        let request = build_performance_data_mode_request(1_789_712_893);
 
         assert_eq!(request.time, 1_789_712_893);
         assert_eq!(request.action, 33);
@@ -1446,18 +1379,17 @@ mod tests {
     }
 
     #[test]
-    fn serializes_power_limit_request_and_validates_bounds() {
-        let minimum = build_power_limit_request(0, 1_789_712_893).expect("request builds");
-        assert_eq!(minimum.data, "A:0,B:0,C:0\r");
+    fn serializes_power_limit_request() {
+        let minimum = build_power_limit_request(2, 1_789_712_893);
+        assert_eq!(minimum.data, "A:20,B:0,C:0\r");
 
-        let request = build_power_limit_request(100, 1_789_712_893).expect("request builds");
+        let request = build_power_limit_request(100, 1_789_712_893);
 
         assert_eq!(request.time, 1_789_712_893);
         assert_eq!(request.action, 8);
         assert_eq!(request.package_nub, 1);
         assert_eq!(request.tid, 1_789_712_893);
         assert_eq!(request.data, "A:1000,B:0,C:0\r");
-        assert!(build_power_limit_request(101, 1_789_712_893).is_err());
     }
 
     #[test]
@@ -1484,22 +1416,5 @@ mod tests {
         let parsed = CommandResDTO::parse_from_bytes(&decrypted).expect("request parses");
         assert_eq!(parsed.action, 33);
         assert_eq!(parsed.package_nub, 1);
-    }
-
-    #[test]
-    fn startup_command_state_reinitializes_only_performance_mode() {
-        let mut state = super::StartupCommandState::default();
-
-        assert!(!state.performance_mode_initialized);
-        assert!(!state.power_limit_initialized);
-
-        state.mark_performance_mode_initialized();
-        state.mark_power_limit_initialized();
-        assert!(state.performance_mode_initialized);
-        assert!(state.power_limit_initialized);
-
-        state.reset_performance_mode();
-        assert!(!state.performance_mode_initialized);
-        assert!(state.power_limit_initialized);
     }
 }

@@ -1,5 +1,5 @@
 // helpers shared by the unit tests
-use crate::inverter::HEADER_LEN;
+use crate::inverter::FRAME_HEADER_LENGTH;
 use crate::mqtt_config::MqttConfig;
 use crate::mqtt_wrapper::{MqttWrapper, QoS};
 use crate::protos::hoymiles::APPInfomationData::{APPDtuInfoMO, APPInfoDataReqDTO};
@@ -112,12 +112,13 @@ fn fake_dtu_with(
         for reply in replies {
             loop {
                 let (mut conn, _) = listener.accept().unwrap();
-                let mut header = [0u8; HEADER_LEN];
+                let mut header = [0u8; FRAME_HEADER_LENGTH];
                 conn.read_exact(&mut header).unwrap();
                 let len = u16::from_be_bytes([header[8], header[9]]) as usize;
                 let mut request = header.to_vec();
                 request.resize(len, 0);
-                conn.read_exact(&mut request[HEADER_LEN..]).unwrap();
+                conn.read_exact(&mut request[FRAME_HEADER_LENGTH..])
+                    .unwrap();
                 if answer_app_info && request_command(&request) == 0xa301 {
                     let mut response = APPInfoDataReqDTO::new();
                     response.dtu_info = Some(APPDtuInfoMO::new()).into();
@@ -142,7 +143,7 @@ pub fn frame_reply(request: &[u8], cmd: u16, payload: &[u8]) -> Vec<u8> {
     f.extend_from_slice(&cmd.to_be_bytes());
     f.extend_from_slice(&request[4..6]);
     f.extend_from_slice(&State::<MODBUS>::calculate(payload).to_be_bytes());
-    f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
+    f.extend_from_slice(&(FRAME_HEADER_LENGTH as u16 + payload.len() as u16).to_be_bytes());
     f.extend_from_slice(payload);
     f
 }

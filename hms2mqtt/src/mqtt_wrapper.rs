@@ -25,7 +25,5 @@ pub trait MqttWrapper {
     fn new(config: &MqttConfig, suffix: &str) -> Self;
 
     /// Messages received on subscribed topics since the last call, as (topic, payload)
-    fn receive(&mut self) -> Vec<(String, Vec<u8>)> {
-        Vec::new()
-    }
+    fn receive(&mut self) -> Vec<(String, Vec<u8>)>;
 }
