@@ -81,8 +81,8 @@ impl SensorConfig {
     }
 
     /// Shows the sensor as unavailable while `topic` reads "offline"
-    pub fn with_availability(mut self, topic: Option<&str>) -> Self {
-        self.availability_topic = topic.map(str::to_string);
+    pub fn with_availability(mut self, topic: &str) -> Self {
+        self.availability_topic = Some(topic.to_string());
         self
     }
 
@@ -315,8 +315,8 @@ impl NumberConfig {
     }
 
     /// Shows the number as unavailable while `topic` reads "offline"
-    pub fn with_availability(mut self, topic: Option<&str>) -> Self {
-        self.availability_topic = topic.map(str::to_string);
+    pub fn with_availability(mut self, topic: &str) -> Self {
+        self.availability_topic = Some(topic.to_string());
         self
     }
 }

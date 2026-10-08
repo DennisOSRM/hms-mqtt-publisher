@@ -71,14 +71,9 @@ fn mqtt_options(config: &MqttConfig, suffix: &str) -> MqttOptions {
         mqttoptions.set_transport(Transport::tls_with_config(tls_client_config().into()));
     }
 
-    //parse the mqtt authentication options
-    if let Some((username, password)) = match (&config.username, &config.password) {
-        (None, None) => None,
-        (None, Some(_)) => None,
-        (Some(username), None) => Some((username.clone(), "".into())),
-        (Some(username), Some(password)) => Some((username.clone(), password.clone())),
-    } {
-        mqttoptions.set_credentials(username, password);
+    // a password without a user name isn't sent
+    if let Some(username) = &config.username {
+        mqttoptions.set_credentials(username, config.password.clone().unwrap_or_default());
     }
 
     // sent by the broker once the connection is lost without a proper disconnect
@@ -117,23 +112,17 @@ impl mqtt_wrapper::MqttWrapper for RumqttcWrapper {
         S: Clone + Into<String>,
         V: Clone + Into<Vec<u8>>,
     {
-        // try publishing up to three times
-        if self
-            .client
-            .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
-            .is_ok()
-        {
-            return Ok(());
+        // try publishing up to three times, as the request queue may be full
+        for _ in 0..2 {
+            if self
+                .client
+                .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
+                .is_ok()
+            {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
-        std::thread::sleep(Duration::from_millis(100));
-        if self
-            .client
-            .try_publish(topic.clone(), match_qos(qos), retain, payload.clone())
-            .is_ok()
-        {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
         Ok(self
             .client
             .try_publish(topic, match_qos(qos), retain, payload)?)

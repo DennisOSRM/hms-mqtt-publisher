@@ -1,6 +1,22 @@
 use crate::command::Command;
 use crate::protos::hoymiles::RealData::{HMSStateResponse, Warning};
 
+/// The warnings as a JSON list, as published by the outputs
+pub(crate) fn warnings_json(warnings: &[Warning]) -> serde_json::Value {
+    warnings
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "inverter": w.inv_id,
+                "code": w.code,
+                "count": w.count,
+                "start": w.start_time,
+                "end": w.end_time,
+            })
+        })
+        .collect()
+}
+
 pub trait MetricCollector {
     fn publish(&mut self, hms_state: &HMSStateResponse);
 
