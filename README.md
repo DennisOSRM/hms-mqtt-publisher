@@ -77,6 +77,8 @@ Settings are read from `config.toml` in the current directory (or next to the ex
 | `MQTT_TLS`         | `tls`                                 | optional, `true` or `false`                       |
 | `MQTT_CLIENT_ID`   | `client_id`                           | optional, used as is; with both outputs enabled `-ha` and `-sm` are appended. Default derived from the device id or inverter host |
 | `DEVICE_ID`        | `device_id`                           | optional, see [Multiple inverters](#multiple-inverters) |
+| `PERFORMANCE_MODE` | `performance_mode`                    | optional, `true` asks the DTU for its fast real-time data mode (action 33) once at startup. It shortens the update interval only briefly |
+| `STARTUP_POWER_LIMIT` | `startup_power_limit`              | optional, power limit in percent (2 to 100) set once at startup |
 
 Environment variables take precedence over `config.toml`. The `MQTT_*` variables apply to the MQTT outputs configured in `config.toml` (`[home_assistant]`, `[simple_mqtt]`); without any, they enable both. Empty variables count as not set.
 

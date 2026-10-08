@@ -92,6 +92,19 @@ pub type Reply = Box<dyn Fn(&[u8]) -> Vec<u8> + Send>;
 /// Each reply closure gets the request frame and returns the bytes to send back.
 /// Returns the port and a handle yielding the received request frames.
 pub fn fake_dtu(replies: Vec<Reply>) -> (u16, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+    fake_dtu_with(replies, true)
+}
+
+/// Like `fake_dtu`, but the application information request (0xA301) is not answered
+/// automatically: it is passed to the replies and recorded like any other request.
+pub fn fake_dtu_raw(replies: Vec<Reply>) -> (u16, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+    fake_dtu_with(replies, false)
+}
+
+fn fake_dtu_with(
+    replies: Vec<Reply>,
+    answer_app_info: bool,
+) -> (u16, std::thread::JoinHandle<Vec<Vec<u8>>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let handle = std::thread::spawn(move || {
@@ -105,7 +118,7 @@ pub fn fake_dtu(replies: Vec<Reply>) -> (u16, std::thread::JoinHandle<Vec<Vec<u8
                 let mut request = header.to_vec();
                 request.resize(len, 0);
                 conn.read_exact(&mut request[HEADER_LEN..]).unwrap();
-                if request_command(&request) == 0xa301 {
+                if answer_app_info && request_command(&request) == 0xa301 {
                     let mut response = APPInfoDataReqDTO::new();
                     response.dtu_info = Some(APPDtuInfoMO::new()).into();
                     let payload = response.write_to_bytes().unwrap();
@@ -142,4 +155,14 @@ pub fn reply_to(request: &[u8], response: &HMSStateResponse) -> Vec<u8> {
 /// The command of a request frame
 pub fn request_command(request: &[u8]) -> u16 {
     u16::from_be_bytes([request[2], request[3]])
+}
+
+/// An application information reply (0xA201) of an unencrypted DTU
+pub fn app_info_reply(request: &[u8], dtu_sw_version: i32) -> Vec<u8> {
+    let mut info = APPDtuInfoMO::new();
+    info.dtu_sw_version = dtu_sw_version;
+    let mut response = APPInfoDataReqDTO::new();
+    response.dtu_serial_number = "414312345678".to_string();
+    response.dtu_info = Some(info).into();
+    frame_reply(request, 0xa201, &response.write_to_bytes().unwrap())
 }

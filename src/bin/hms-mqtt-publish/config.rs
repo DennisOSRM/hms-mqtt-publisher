@@ -1,3 +1,4 @@
+use hms2mqtt::command::POWER_LIMIT_RANGE;
 use hms2mqtt::mqtt_config::MqttConfig;
 use log::info;
 use serde_derive::Deserialize;
@@ -15,6 +16,8 @@ use serde_derive::Deserialize;
 /// | `MQTT_TLS`         | `tls` of the MQTT outputs (`true` or `false`)    |
 /// | `MQTT_CLIENT_ID`   | `client_id` of the MQTT outputs                  |
 /// | `DEVICE_ID`        | `device_id`                                      |
+/// | `PERFORMANCE_MODE` | `performance_mode` (`true` or `false`)           |
+/// | `STARTUP_POWER_LIMIT` | `startup_power_limit` (percent, 2 to 100)     |
 ///
 /// The `MQTT_*` variables apply to every MQTT output in `config.toml`. Without any MQTT output
 /// in the file, they configure both the Home Assistant and the simple MQTT output. Empty
@@ -31,6 +34,10 @@ pub struct Config {
     pub inverter_host: String,
     pub update_interval: Option<u64>,
     pub device_id: Option<String>,
+    /// Ask the DTU for its fast real-time data mode once at startup (command action 33)
+    pub performance_mode: Option<bool>,
+    /// Power limit in percent set once at startup
+    pub startup_power_limit: Option<u32>,
     pub home_assistant: Option<MqttConfig>,
     pub simple_mqtt: Option<MqttConfig>,
 }
@@ -69,6 +76,16 @@ impl Config {
                 format!("UPDATE_INTERVAL must be a number of milliseconds, got '{interval}'")
             })?);
         }
+        if let Some(mode) = var("PERFORMANCE_MODE") {
+            info!("PERFORMANCE_MODE overrides performance_mode");
+            config.performance_mode = Some(parse_bool("PERFORMANCE_MODE", &mode)?);
+        }
+        if let Some(limit) = var("STARTUP_POWER_LIMIT") {
+            info!("STARTUP_POWER_LIMIT overrides startup_power_limit");
+            config.startup_power_limit = Some(limit.trim().parse().map_err(|_| {
+                format!("STARTUP_POWER_LIMIT must be a number of percent, got '{limit}'")
+            })?);
+        }
         if let Some(device_id) = var("DEVICE_ID") {
             info!("DEVICE_ID overrides device_id");
             for mqtt in [&mut config.home_assistant, &mut config.simple_mqtt]
@@ -89,11 +106,7 @@ impl Config {
                 })
                 .transpose()?;
             let tls = var("MQTT_TLS")
-                .map(|tls| match tls.trim().to_ascii_lowercase().as_str() {
-                    "true" | "1" | "yes" => Ok(true),
-                    "false" | "0" | "no" => Ok(false),
-                    _ => Err(format!("MQTT_TLS must be true or false, got '{tls}'")),
-                })
+                .map(|tls| parse_bool("MQTT_TLS", &tls))
                 .transpose()?;
 
             if config.home_assistant.is_none() && config.simple_mqtt.is_none() {
@@ -168,6 +181,15 @@ impl Config {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if let Some(limit) = self.startup_power_limit {
+            if !POWER_LIMIT_RANGE.contains(&limit) {
+                return Err(format!(
+                    "startup_power_limit must be between {} and {} %, got {limit}",
+                    POWER_LIMIT_RANGE.start(),
+                    POWER_LIMIT_RANGE.end()
+                ));
+            }
+        }
         if self.inverter_host.trim().is_empty() {
             return Err(
                 "no inverter configured: set inverter_host in config.toml or INVERTER_HOST"
@@ -202,6 +224,14 @@ impl Config {
             }
         }
         Ok(())
+    }
+}
+
+fn parse_bool(name: &str, value: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Ok(true),
+        "false" | "0" | "no" => Ok(false),
+        _ => Err(format!("{name} must be true or false, got '{value}'")),
     }
 }
 
@@ -551,6 +581,45 @@ mod tests {
             .unwrap();
         assert_eq!(sm.device_id.as_deref(), Some("hms800wt2"));
         assert_eq!(sm.client_id.as_deref(), Some("old-client"));
+    }
+
+    #[test]
+    fn startup_options_from_toml_and_environment() {
+        let base = [("INVERTER_HOST", "hms"), ("MQTT_BROKER_HOST", "broker")];
+        let config = Config::load(None, env(&base)).unwrap();
+        assert_eq!(
+            (config.performance_mode, config.startup_power_limit),
+            (None, None)
+        );
+
+        let toml = "inverter_host = \"hms\"\nperformance_mode = true\nstartup_power_limit = 80\n[simple_mqtt]\nhost = \"b\"\n";
+        let config = Config::load(Some(toml), env(&[])).unwrap();
+        assert_eq!(config.performance_mode, Some(true));
+        assert_eq!(config.startup_power_limit, Some(80));
+
+        let config = Config::load(
+            Some(toml),
+            env(&[("PERFORMANCE_MODE", "false"), ("STARTUP_POWER_LIMIT", "55")]),
+        )
+        .unwrap();
+        assert_eq!(config.performance_mode, Some(false));
+        assert_eq!(config.startup_power_limit, Some(55));
+    }
+
+    #[test]
+    fn invalid_startup_options_are_reported() {
+        let base = [("INVERTER_HOST", "hms"), ("MQTT_BROKER_HOST", "broker")];
+        for (name, value) in [
+            ("PERFORMANCE_MODE", "sometimes"),
+            ("STARTUP_POWER_LIMIT", "1"),
+            ("STARTUP_POWER_LIMIT", "101"),
+            ("STARTUP_POWER_LIMIT", "half"),
+        ] {
+            let mut vars = base.to_vec();
+            vars.push((name, value));
+            let err = Config::load(None, env(&vars)).unwrap_err();
+            assert!(err.to_lowercase().contains(&name.to_lowercase()), "{err}");
+        }
     }
 
     #[test]

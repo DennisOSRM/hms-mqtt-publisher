@@ -1060,6 +1060,128 @@ mod tests {
         f
     }
 
+    /// A command reply (0xA205) for `action` with error code `err_code`
+    fn command_reply_for(req: &[u8], action: i32, err_code: i32) -> Vec<u8> {
+        let response = CommandReqDTO {
+            action,
+            err_code,
+            ..Default::default()
+        };
+        crate::test_support::frame_reply(req, 0xa205, &response.write_to_bytes().unwrap())
+    }
+
+    fn fresh_reading() -> HMSStateResponse {
+        response_with_links(&[1])
+    }
+
+    fn commands(requests: &[Vec<u8>]) -> Vec<u16> {
+        requests
+            .iter()
+            .map(|r| crate::test_support::request_command(r))
+            .collect()
+    }
+
+    #[test]
+    fn application_information_is_requested_once() {
+        let (port, dtu) = crate::test_support::fake_dtu_raw(vec![
+            Box::new(|req| crate::test_support::app_info_reply(req, 770)),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert!(inverter.update_state().is_some());
+        assert!(inverter.update_state().is_some());
+        let caps = inverter.capabilities.as_ref().unwrap();
+        assert!(!caps.encrypted);
+        assert_eq!(caps.firmware_version, 770);
+        assert_eq!(caps.dtu_serial_number, "414312345678");
+        assert_eq!(commands(&dtu.join().unwrap()), [0xa301, 0xa311, 0xa311]);
+    }
+
+    #[test]
+    fn invalid_application_information_is_retried_next_cycle() {
+        let (port, dtu) = crate::test_support::fake_dtu_raw(vec![
+            // reply without DTU information
+            Box::new(|req| {
+                let response = crate::protos::hoymiles::APPInfomationData::APPInfoDataReqDTO::new();
+                crate::test_support::frame_reply(req, 0xa201, &response.write_to_bytes().unwrap())
+            }),
+            // garbage instead of protobuf
+            Box::new(|req| crate::test_support::frame_reply(req, 0xa201, &[0xff; 4])),
+            // closes the connection without answering
+            Box::new(|_| Vec::new()),
+            Box::new(|req| crate::test_support::app_info_reply(req, 770)),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        for _ in 0..3 {
+            assert!(inverter.update_state().is_none());
+            assert_eq!(inverter.state(), NetworkState::Offline);
+            assert!(!inverter.last_reading_stale());
+        }
+        assert!(inverter.update_state().is_some());
+        assert_eq!(inverter.state(), NetworkState::Online);
+        assert_eq!(
+            commands(&dtu.join().unwrap()),
+            [0xa301, 0xa301, 0xa301, 0xa301, 0xa311]
+        );
+    }
+
+    #[test]
+    fn startup_commands_are_sent_once_before_the_first_reading() {
+        let (port, dtu) = crate::test_support::fake_dtu_raw(vec![
+            Box::new(|req| crate::test_support::app_info_reply(req, 770)),
+            Box::new(|req| command_reply_for(req, 33, 0)),
+            Box::new(|req| command_reply_for(req, 8, 0)),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+        ]);
+        let mut inverter = Inverter::with_port_and_options("127.0.0.1", port, true, Some(80));
+        assert!(inverter.update_state().is_some());
+        assert!(inverter.update_state().is_some());
+
+        let requests = dtu.join().unwrap();
+        assert_eq!(
+            commands(&requests),
+            [0xa301, 0xa305, 0xa305, 0xa311, 0xa311]
+        );
+        let performance = CommandResDTO::parse_from_bytes(&requests[1][HEADER_LEN..]).unwrap();
+        assert_eq!(performance.action, 33);
+        let limit = CommandResDTO::parse_from_bytes(&requests[2][HEADER_LEN..]).unwrap();
+        assert_eq!(limit.action, 8);
+        assert_eq!(limit.data, "A:800,B:0,C:0\r");
+    }
+
+    #[test]
+    fn rejected_startup_commands_are_not_repeated() {
+        let (port, dtu) = crate::test_support::fake_dtu_raw(vec![
+            Box::new(|req| crate::test_support::app_info_reply(req, 770)),
+            Box::new(|req| command_reply_for(req, 33, 1)),
+            Box::new(|req| command_reply_for(req, 8, 1)),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+        ]);
+        let mut inverter = Inverter::with_port_and_options("127.0.0.1", port, true, Some(50));
+        assert!(inverter.update_state().is_some());
+        assert!(inverter.update_state().is_some());
+        assert_eq!(
+            commands(&dtu.join().unwrap()),
+            [0xa301, 0xa305, 0xa305, 0xa311, 0xa311]
+        );
+    }
+
+    #[test]
+    fn without_options_no_startup_commands_are_sent() {
+        let (port, dtu) = crate::test_support::fake_dtu_raw(vec![
+            Box::new(|req| crate::test_support::app_info_reply(req, 770)),
+            Box::new(|req| reply_to(req, &fresh_reading())),
+        ]);
+        let mut inverter = Inverter::with_options("127.0.0.1", false, None);
+        inverter.port = port;
+        assert!(inverter.update_state().is_some());
+        assert_eq!(commands(&dtu.join().unwrap()), [0xa301, 0xa311]);
+    }
+
     #[test]
     fn set_power_limit_sends_the_command_of_the_vendor_app() {
         let (port, dtu) = fake_dtu(vec![
