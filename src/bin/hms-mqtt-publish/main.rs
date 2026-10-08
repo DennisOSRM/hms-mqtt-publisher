@@ -97,7 +97,18 @@ fn main() {
     }
 
     info!("inverter host: {}", config.inverter_host);
-    let inverter = Inverter::new(&config.inverter_host);
+    let startup_power_limit = config.startup_power_limit.map(|limit| limit as u8);
+    if config.performance_mode == Some(true) {
+        info!("performance mode will be requested at startup");
+    }
+    if let Some(limit) = startup_power_limit {
+        info!("power limit will be set to {limit} % at startup");
+    }
+    let inverter = Inverter::with_options(
+        &config.inverter_host,
+        config.performance_mode.unwrap_or(false),
+        startup_power_limit,
+    );
 
     let mut output_channels: Vec<Box<dyn MetricCollector>> = Vec::new();
     if let Some(config) = config.home_assistant {
