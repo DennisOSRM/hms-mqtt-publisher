@@ -1,0 +1,73 @@
+name: Release-plz
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  # Creates the git tag and GitHub release when a release PR is merged
+  release:
+    name: Release
+    if: github.repository_owner == 'DennisOSRM'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # to start the Docker image workflow for the new release
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # releases created with GITHUB_TOKEN don't trigger the release event of other workflows
+      - name: Publish Docker image for the release
+        if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: |
+          for tag in $(jq -r '.[].tag' <<< "$RELEASES"); do
+            gh workflow run dockerhub.yml --repo "$GITHUB_REPOSITORY" --ref "$tag"
+          done
+
+  # Opens or updates the release PR with the version bump and changelog
+  release-pr:
+    name: Release PR
+    if: github.repository_owner == 'DennisOSRM'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          # PRs opened with GITHUB_TOKEN don't run CI; set RELEASE_PLZ_TOKEN (PAT or app token) to get checks on release PRs
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}

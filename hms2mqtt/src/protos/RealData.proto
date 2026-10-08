@@ -1,30 +1,68 @@
 syntax = "proto3";
 
+// Request for real-time data (0xA311, RealResDTO in the S-Miles Installer app)
 message RealDataResDTO {
-  string ymd_hms = 1;
-  int32 cp = 2;
+  string ymd_hms = 1;           // local time, "YYYY-MM-DD HH:MM:SS"
+  int32 cp = 2;                 // requested page, starting at 0
   int32 err_code = 3;
-  int32 offset = 4;
-  int32 time = 5;
+  int32 offset = 4;             // local time zone offset in seconds
+  int32 time = 5;               // epoch
 }
 
+// Field numbers follow the single-phase inverter message (SGSMO) of the S-Miles Installer app.
 message InverterState {
   int64 inv_id = 1;
-  int32 port_id = 2;
+  int32 port_id = 2;          // app name: ver. Kept as "port_id" because it keys MQTT/HA entity names
   int32 grid_voltage = 3;     // [V], factor 0.1
   int32 grid_freq = 4;        // [Hz], factor 0.01
   int32 pv_current_power = 5; // [W], factor 0.1
-  int32 unknown1 = 7;
-  int32 unknown2 = 8;         // power limit? [%], factor 0.1
+  int32 reactive_power = 6;   // app name: q [var], factor 0.1
+  int32 ac_current = 7;       // app name: i [A], factor 0.01
+  int32 power_factor = 8;     // app name: pf, factor 0.001
   int32 temperature = 9;      // [C], factor 0.1
-  int32 unknown3 = 10;
-  int32 unknown4 = 12;
-  int32 bit_field = 20;       // a guess
-  int32 grid_current = 13;    // [A], factor 0.01
-  int32 power_factor = 14;    // factor 0.001
-  int32 warning_number = 15;
-  int32 modulation_index_signal = 16;
-  int32 firmware_version = 17;
+  int32 warning_count = 10;   // app name: wnum
+  int32 crc = 11;
+  int32 link = 12;            // >0: last DTU read of this inverter succeeded; 0: values are stale
+  int32 power_limit = 13;     // app name: p_lim [%], factor 0.1
+  int32 mi_signal = 14;       // radio signal strength
+  int32 coa_s = 15;
+  int32 lim_p = 16;           // active power setpoint
+  int32 lim_q = 17;           // reactive power setpoint
+  int32 limr_pf = 18;         // power factor setpoint
+  uint64 route_info = 19;
+  int32 bit_field = 20;       // not in the app schema; low byte freezes together with stale data
+}
+
+// Field numbers follow the three-phase inverter message (TGSMO) of the S-Miles Installer app.
+// Scaling is assumed to match InverterState.
+message ThreePhaseInverterState {
+  int64 inv_id = 1;
+  int32 version = 2;
+  int32 voltage_a = 3;        // phase voltages [V], factor 0.1
+  int32 voltage_b = 4;
+  int32 voltage_c = 5;
+  int32 voltage_ab = 6;       // line voltages [V], factor 0.1
+  int32 voltage_bc = 7;
+  int32 voltage_ca = 8;
+  int32 grid_freq = 9;        // [Hz], factor 0.01
+  int32 power = 10;           // [W], factor 0.1
+  int32 reactive_power = 11;  // [var], factor 0.1
+  int32 current_a = 12;       // phase currents [A], factor 0.01
+  int32 current_b = 13;
+  int32 current_c = 14;
+  int32 power_factor = 15;    // factor 0.001
+  int32 temperature = 16;     // [C], factor 0.1
+  int32 warning_count = 17;
+  int32 crc = 18;
+  int32 link = 19;            // >0: last DTU read of this inverter succeeded; 0: values are stale
+  int32 mi_signal = 20;
+  int32 coa_s = 21;
+  int32 power_limit = 22;     // [%], factor 0.1
+  int32 lim_p = 23;
+  int32 lim_q = 24;
+  int32 limr_pf = 25;
+  uint64 route_info = 26;
+  int32 current_l = 27;
 }
 
 message PortState {
@@ -35,17 +73,68 @@ message PortState {
   int32 pv_power = 5;         // [W], factor 0.1
   int32 pv_energy_total = 6;  // [Wh]
   int32 pv_daily_yield = 7;   // [Wh]
-  int32 bitfield = 8;         // bitfield is a guess
+  int32 code = 8;             // per-port status/error code
+  int32 e_delta = 9;
 }
 
 message HMSStateResponse {
   string dtu_sn = 1;             // serial
   int32 time = 2;               // epoch
-  int32 device_nub = 3;
-  int32 pv_nub = 4;             // repeats cp field from request
-  int32 package_nub = 5;
+  int32 page_count = 3;         // app name: ap; replies with many devices span several pages
+  int32 page = 4;               // app name: cp; repeats the requested page
+  int32 version = 5;            // app name: ver
   repeated InverterState inverter_state = 9;
+  repeated ThreePhaseInverterState three_phase_inverter_state = 10;
   repeated PortState port_state = 11;
   int32 pv_current_power = 12;  // [W], factor 0.1
   int32 pv_daily_yield = 13;    // [Wh]
+}
+// Request for the warnings (0xA304, WarnResDTO in the S-Miles Installer app)
+message WarningsRequest {
+  string ymd_hms = 1;           // local time, "YYYY-MM-DD HH:MM:SS"
+  int32 page = 2;               // app name: package_now
+  int32 err_code = 3;
+  int32 offset = 4;             // local time zone offset in seconds
+  int32 time = 5;               // epoch
+}
+
+message Warning {
+  int64 inv_id = 1;             // serial number of the inverter
+  int32 code = 2;
+  int32 count = 3;              // app name: num
+  int32 start_time = 4;         // epoch
+  int32 end_time = 5;           // epoch, 0 while the warning is active
+  int32 data1 = 6;
+  int32 data2 = 7;
+}
+
+// Reply to WarningsRequest (0xA204, WarnReqDTO in the S-Miles Installer app)
+message WarningsResponse {
+  string dtu_sn = 1;
+  int32 time = 2;
+  int32 page_count = 3;         // app name: package_nub
+  int32 page = 4;               // app name: package_now
+  int32 warn_device = 5;
+  repeated Warning warnings = 6;
+}
+
+// Control command (0xA305, CommandResDTO in the S-Miles Installer app)
+message CommandRequest {
+  int32 time = 1;               // epoch
+  int32 action = 2;             // e.g. 8: power limit
+  int32 dev_kind = 3;           // 0: the DTU and all its inverters
+  int32 package_nub = 4;
+  int32 package_now = 5;
+  int64 tid = 6;                // transaction id, the app uses the epoch
+  bytes data = 7;               // action parameters, ASCII
+}
+
+// Reply to CommandRequest (0xA205, CommandReqDTO in the S-Miles Installer app)
+message CommandResponse {
+  string dtu_sn = 1;
+  int32 time = 2;
+  int32 action = 3;
+  int32 package_now = 4;
+  int32 err_code = 5;           // 0: accepted
+  int64 tid = 6;
 }

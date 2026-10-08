@@ -2,7 +2,7 @@ use crate::crypto::{self, CryptoError};
 use crate::protos::hoymiles::{
     APPInfomationData::{APPInfoDataReqDTO, APPInfoDataResDTO},
     CommandPB::{CommandReqDTO, CommandResDTO},
-    RealData::{HMSStateResponse, RealDataResDTO},
+    RealData::{HMSStateResponse, RealDataResDTO, Warning, WarningsRequest, WarningsResponse},
     RealDataNew::{RealDataNewReqDTO, RealDataNewResDTO},
 };
 use anyhow::{anyhow, Context, Result};
@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const INVERTER_PORT: &str = "10081";
+const INVERTER_PORT: u16 = 10081;
 const FRAME_HEADER_LENGTH: usize = 10;
 const GCM_TAG_LENGTH: usize = 16;
 const MAX_FRAME_LENGTH: usize = u16::MAX as usize;
@@ -22,10 +22,12 @@ const APP_INFO_COMMAND: u16 = 0xa301;
 const APP_INFO_REQUEST_COMMAND: u16 = 0xa201;
 const LEGACY_REAL_DATA_COMMAND: u16 = 0xa303;
 const REAL_DATA_NEW_COMMAND: u16 = 0xa311;
+const WARNINGS_REQUEST_COMMAND: u16 = 0xa304;
 const COMMAND_RES_COMMAND: u16 = 0xa305;
 const ENCRYPTION_FLAG_BIT: i64 = 25;
 const ACTION_LIMIT_POWER: i32 = 8;
 const ACTION_PERFORMANCE_DATA_MODE: i32 = 33;
+const MAX_PAGES: i32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NetworkState {
@@ -44,8 +46,10 @@ struct Capabilities {
 
 pub struct Inverter<'a> {
     host: &'a str,
+    port: u16,
     state: NetworkState,
     sequence: u16,
+    last_reading_stale: bool,
     capabilities: Option<Capabilities>,
     enable_performance_mode: bool,
     initialize_power_limit: Option<u8>,
@@ -74,7 +78,11 @@ impl StartupCommandState {
 
 impl<'a> Inverter<'a> {
     pub fn new(host: &'a str) -> Self {
-        Self::with_options(host, false, None)
+        Self::with_port_and_options(host, INVERTER_PORT, false, None)
+    }
+
+    pub fn with_port(host: &'a str, port: u16) -> Self {
+        Self::with_port_and_options(host, port, false, None)
     }
 
     pub fn with_options(
@@ -82,15 +90,39 @@ impl<'a> Inverter<'a> {
         enable_performance_mode: bool,
         initialize_power_limit: Option<u8>,
     ) -> Self {
+        Self::with_port_and_options(
+            host,
+            INVERTER_PORT,
+            enable_performance_mode,
+            initialize_power_limit,
+        )
+    }
+
+    fn with_port_and_options(
+        host: &'a str,
+        port: u16,
+        enable_performance_mode: bool,
+        initialize_power_limit: Option<u8>,
+    ) -> Self {
         Self {
             host,
+            port,
             state: NetworkState::Unknown,
             sequence: 0_u16,
+            last_reading_stale: false,
             capabilities: None,
             enable_performance_mode,
             initialize_power_limit,
             startup_command_state: StartupCommandState::default(),
         }
+    }
+
+    pub fn state(&self) -> NetworkState {
+        self.state
+    }
+
+    pub fn last_reading_stale(&self) -> bool {
+        self.last_reading_stale
     }
 
     fn set_state(&mut self, new_state: NetworkState) {
@@ -101,6 +133,7 @@ impl<'a> Inverter<'a> {
     }
 
     pub fn update_state(&mut self) -> Option<HMSStateResponse> {
+        self.last_reading_stale = false;
         if self.capabilities.is_none() {
             if let Err(error) = self.load_capabilities() {
                 error!("Unable to read inverter application information: {error:#}");
@@ -112,6 +145,11 @@ impl<'a> Inverter<'a> {
 
         match self.request_telemetry() {
             Ok(response) => {
+                if is_stale(&response) {
+                    warn!("DTU reports no inverter link (link == 0), skipping stale reading");
+                    self.last_reading_stale = true;
+                    return None;
+                }
                 self.set_state(NetworkState::Online);
                 Some(response)
             }
@@ -128,6 +166,13 @@ impl<'a> Inverter<'a> {
 
                 match self.request_telemetry() {
                     Ok(response) => {
+                        if is_stale(&response) {
+                            warn!(
+                                "DTU reports no inverter link (link == 0), skipping stale reading"
+                            );
+                            self.last_reading_stale = true;
+                            return None;
+                        }
                         self.set_state(NetworkState::Online);
                         Some(response)
                     }
@@ -161,7 +206,7 @@ impl<'a> Inverter<'a> {
         if let Some(power_limit) = self.initialize_power_limit {
             if !self.startup_command_state.power_limit_initialized {
                 info!("Initializing inverter power limit to {power_limit}%");
-                match self.set_power_limit(power_limit) {
+                match self.set_power_limit_command(power_limit) {
                     Ok(()) => info!("Power limit initialized successfully"),
                     Err(error) => warn!("Unable to initialize inverter power limit: {error:#}"),
                 }
@@ -236,7 +281,79 @@ impl<'a> Inverter<'a> {
         validate_command_response(&response, ACTION_PERFORMANCE_DATA_MODE)
     }
 
-    fn set_power_limit(&mut self, percent: u8) -> Result<()> {
+    pub fn set_power_limit(&mut self, percent: u32) -> std::result::Result<(), String> {
+        if percent > 100 {
+            return Err("power limit must be between 0 and 100 percent".to_owned());
+        }
+        let percent = u8::try_from(percent)
+            .map_err(|_| "power limit must be between 0 and 100 percent".to_owned())?;
+        self.ensure_capabilities()
+            .and_then(|()| self.set_power_limit_command(percent))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn fetch_warnings(&mut self) -> Option<Vec<Warning>> {
+        if let Err(error) = self.ensure_capabilities() {
+            debug!("could not read inverter application information for warnings: {error:#}");
+            return None;
+        }
+        let encrypted = self
+            .capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.encrypted);
+        let mut warnings = Vec::new();
+        let mut page = 0;
+        loop {
+            let now = Local::now();
+            let request = WarningsRequest {
+                ymd_hms: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+                page,
+                offset: now.offset().local_minus_utc(),
+                time: now.timestamp() as i32,
+                ..Default::default()
+            };
+            let payload = match request
+                .write_to_bytes()
+                .map_err(anyhow::Error::new)
+                .and_then(|bytes| {
+                    self.send_request(
+                        WARNINGS_REQUEST_COMMAND,
+                        &bytes,
+                        encrypted,
+                        &[
+                            WARNINGS_REQUEST_COMMAND,
+                            response_command(WARNINGS_REQUEST_COMMAND),
+                        ],
+                    )
+                })
+                .and_then(|bytes| {
+                    WarningsResponse::parse_from_bytes(&bytes)
+                        .map_err(anyhow::Error::new)
+                        .context("invalid warnings response protobuf")
+                }) {
+                Ok(response) => response,
+                Err(error) => {
+                    debug!("could not fetch warnings: {error:#}");
+                    return None;
+                }
+            };
+            warnings.extend(payload.warnings);
+            page += 1;
+            if page >= payload.page_count.clamp(1, MAX_PAGES) {
+                return Some(warnings);
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    fn ensure_capabilities(&mut self) -> Result<()> {
+        if self.capabilities.is_none() {
+            self.load_capabilities()?;
+        }
+        Ok(())
+    }
+
+    fn set_power_limit_command(&mut self, percent: u8) -> Result<()> {
         let timestamp = unix_timestamp_i32()?;
         let request = build_power_limit_request(percent, timestamp)?;
         let response = self.send_command(request)?;
@@ -290,7 +407,7 @@ impl<'a> Inverter<'a> {
             .context("encrypted inverter has no enc_rand")?;
         let mut request = build_real_data_new_request(0)?;
         let mut combined = self.request_real_data_new_page(&request)?;
-        let package_count = combined.ap.max(1);
+        let package_count = combined.ap.clamp(1, MAX_PAGES);
 
         for package in 1..package_count {
             request = build_real_data_new_request(package)?;
@@ -401,7 +518,7 @@ impl<'a> Inverter<'a> {
             message.len()
         );
 
-        let inverter_host = format!("{}:{}", self.host, INVERTER_PORT);
+        let inverter_host = format!("{}:{}", self.host, self.port);
         let address = inverter_host
             .to_socket_addrs()
             .context("unable to resolve inverter address")?
@@ -683,10 +800,11 @@ fn map_real_data_new(
     let mut mapped = HMSStateResponse {
         dtu_sn: dtu_serial_number,
         time: response.timestamp,
+        page_count: response.ap,
+        page: response.cp,
+        version: response.firmware_version,
         pv_current_power: checked_u64_to_i32(response.dtu_power, "dtu_power")?,
         pv_daily_yield: checked_u64_to_i32(response.dtu_daily_energy, "dtu_daily_energy")?,
-        device_nub: checked_usize_to_i32(response.sgs_data.len(), "SGS count")?,
-        pv_nub: checked_usize_to_i32(response.pv_data.len(), "PV count")?,
         ..Default::default()
     };
 
@@ -697,12 +815,14 @@ fn map_real_data_new(
             grid_voltage: sgs.voltage,
             grid_freq: sgs.frequency,
             pv_current_power: sgs.active_power,
-            temperature: sgs.temperature,
-            grid_current: sgs.current,
+            reactive_power: sgs.reactive_power,
+            ac_current: sgs.current,
             power_factor: sgs.power_factor,
-            warning_number: sgs.warning_number,
-            modulation_index_signal: sgs.modulation_index_signal,
-            firmware_version: sgs.firmware_version,
+            temperature: sgs.temperature,
+            warning_count: sgs.warning_number,
+            link: sgs.link_status,
+            power_limit: sgs.power_limit,
+            mi_signal: sgs.modulation_index_signal,
             ..Default::default()
         };
         mapped.inverter_state.push(inverter);
@@ -725,6 +845,20 @@ fn map_real_data_new(
     Ok(mapped)
 }
 
+pub fn is_stale(response: &HMSStateResponse) -> bool {
+    response
+        .inverter_state
+        .iter()
+        .map(|inverter| inverter.link)
+        .chain(
+            response
+                .three_phase_inverter_state
+                .iter()
+                .map(|inverter| inverter.link),
+        )
+        .all(|link| link == 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -734,6 +868,7 @@ mod tests {
     };
     use crate::protos::hoymiles::{
         CommandPB::CommandResDTO,
+        RealData::{HMSStateResponse, InverterState, ThreePhaseInverterState},
         RealDataNew::{PvMO, RealDataNewReqDTO, SGSMO},
     };
     use crc16::{State, MODBUS};
@@ -841,6 +976,9 @@ mod tests {
             power_factor: 1_000,
             temperature: 183,
             warning_number: 2,
+            link_status: 1,
+            power_limit: 750,
+            reactive_power: 12,
             modulation_index_signal: 7_405_661,
             ..Default::default()
         });
@@ -879,11 +1017,40 @@ mod tests {
         assert_eq!(mapped.pv_current_power, 1_285);
         assert_eq!(mapped.pv_daily_yield, 52);
         assert_eq!(mapped.inverter_state.len(), 1);
-        assert_eq!(mapped.inverter_state[0].grid_current, 54);
+        assert_eq!(mapped.inverter_state[0].ac_current, 54);
+        assert_eq!(mapped.inverter_state[0].reactive_power, 12);
         assert_eq!(mapped.inverter_state[0].power_factor, 1_000);
+        assert_eq!(mapped.inverter_state[0].warning_count, 2);
+        assert_eq!(mapped.inverter_state[0].link, 1);
+        assert_eq!(mapped.inverter_state[0].power_limit, 750);
+        assert_eq!(mapped.inverter_state[0].mi_signal, 7_405_661);
         assert_eq!(mapped.port_state.len(), 2);
         assert_eq!(mapped.port_state[1].pv_port, 2);
         assert_eq!(mapped.port_state[1].pv_energy_total, 1_312_058);
+    }
+
+    #[test]
+    fn stale_detection_checks_single_and_three_phase_inverters() {
+        let mut response = HMSStateResponse::new();
+        assert!(super::is_stale(&response));
+
+        let mut inverter = InverterState::new();
+        inverter.link = 1;
+        response.inverter_state.push(inverter);
+        assert!(!super::is_stale(&response));
+        response.inverter_state[0].link = 0;
+        assert!(super::is_stale(&response));
+
+        let mut inverter = ThreePhaseInverterState::new();
+        inverter.link = 1;
+        response.three_phase_inverter_state.push(inverter);
+        assert!(!super::is_stale(&response));
+    }
+
+    #[test]
+    fn public_power_limit_rejects_values_over_one_hundred_without_connecting() {
+        let mut inverter = super::Inverter::new("localhost");
+        assert!(inverter.set_power_limit(101).is_err());
     }
 
     #[test]
