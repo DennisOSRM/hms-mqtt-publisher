@@ -24,7 +24,7 @@ const APP_INFO_REQUEST_COMMAND: u16 = 0xa201;
 const REAL_DATA_NEW_COMMAND: u16 = 0xa311;
 const WARNINGS_REQUEST_COMMAND: u16 = 0xa304;
 const COMMAND_RES_COMMAND: u16 = 0xa305;
-const ENCRYPTION_FLAG_BIT: i64 = 25;
+pub(crate) const ENCRYPTION_FLAG_BIT: i64 = 25;
 const ACTION_LIMIT_POWER: i32 = 8;
 const ACTION_PERFORMANCE_DATA_MODE: i32 = 33;
 const MAX_PAGES: i32 = 16;
@@ -632,7 +632,7 @@ fn unix_timestamp_i32() -> Result<i32> {
         .context("Unix timestamp does not fit into Hoymiles int32 field")
 }
 
-fn build_frame(
+pub(crate) fn build_frame(
     command: u16,
     sequence: u16,
     payload: &[u8],
@@ -1416,5 +1416,262 @@ mod tests {
         let parsed = CommandResDTO::parse_from_bytes(&decrypted).expect("request parses");
         assert_eq!(parsed.action, 33);
         assert_eq!(parsed.package_nub, 1);
+    }
+
+    const KEY: [u8; 16] = [0x42; 16];
+    const OTHER_KEY: [u8; 16] = [0x24; 16];
+
+    /// A RealDataNew page with one inverter and its two PV ports
+    fn real_data_new_page(page: i32, pages: i32, inverter: i64, dtu_power: u64) -> Vec<u8> {
+        let mut response = RealDataNewReqDTO {
+            ap: pages,
+            cp: page,
+            dtu_power,
+            ..Default::default()
+        };
+        response.sgs_data.push(SGSMO {
+            serial_number: inverter,
+            link_status: 1,
+            active_power: 1_000,
+            ..Default::default()
+        });
+        for port in 1..=2 {
+            response.pv_data.push(PvMO {
+                serial_number: inverter,
+                port_number: port,
+                ..Default::default()
+            });
+        }
+        response.write_to_bytes().unwrap()
+    }
+
+    fn encrypted_telemetry(key: [u8; 16]) -> crate::test_support::Reply {
+        Box::new(move |req| {
+            crate::test_support::encrypted_reply(req, 0xa211, &real_data_new_page(0, 1, 7, 1), &key)
+        })
+    }
+
+    fn encrypted_app_info(key: [u8; 16]) -> crate::test_support::Reply {
+        Box::new(move |req| crate::test_support::encrypted_app_info_reply(req, &key))
+    }
+
+    #[test]
+    fn encrypted_dtu_pages_are_requested_merged_and_mapped() {
+        let page = |page: i32, inverter: i64, dtu_power: u64| -> crate::test_support::Reply {
+            Box::new(move |req| {
+                let payload = real_data_new_page(page, 2, inverter, dtu_power);
+                crate::test_support::encrypted_reply(req, 0xa211, &payload, &KEY)
+            })
+        };
+        let (port, dtu) = crate::test_support::fake_encrypted_dtu(vec![
+            encrypted_app_info(KEY),
+            page(0, 11, 2_000),
+            // later pages don't repeat the totals
+            page(1, 22, 0),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        inverter.page_delay = Duration::ZERO;
+
+        let reading = inverter.update_state().expect("fresh reading");
+        assert_eq!(inverter.state(), NetworkState::Online);
+        assert_eq!(reading.dtu_sn, "414312345678");
+        assert_eq!(reading.pv_current_power, 2_000);
+        let ids: Vec<i64> = reading.inverter_state.iter().map(|i| i.inv_id).collect();
+        assert_eq!(ids, [11, 22]);
+        let port_ids: Vec<i32> = reading.inverter_state.iter().map(|i| i.port_id).collect();
+        assert_eq!(port_ids, [1, 2]);
+        assert_eq!(reading.port_state.len(), 4);
+
+        let requests = dtu.join().unwrap();
+        assert_eq!(commands(&requests), [0xa301, 0xa311, 0xa311]);
+        let pages: Vec<i32> = requests[1..]
+            .iter()
+            .map(|r| {
+                RealDataNewResDTO::parse_from_bytes(&r[FRAME_HEADER_LENGTH..])
+                    .unwrap()
+                    .cp
+            })
+            .collect();
+        assert_eq!(pages, [0, 1]);
+    }
+
+    #[test]
+    fn encrypted_commands_and_warnings() {
+        let (port, dtu) = crate::test_support::fake_encrypted_dtu(vec![
+            encrypted_app_info(KEY),
+            Box::new(|req| {
+                let response = CommandReqDTO {
+                    action: 8,
+                    ..Default::default()
+                };
+                let payload = response.write_to_bytes().unwrap();
+                crate::test_support::encrypted_reply(req, 0xa205, &payload, &KEY)
+            }),
+            Box::new(|req| {
+                let mut response = WarningsResponse::new();
+                response.warnings.push(Warning::new());
+                let payload = response.write_to_bytes().unwrap();
+                crate::test_support::encrypted_reply(req, 0xa204, &payload, &KEY)
+            }),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert_eq!(inverter.set_power_limit(60), Ok(()));
+        assert_eq!(inverter.fetch_warnings().map(|w| w.len()), Some(1));
+
+        let requests = dtu.join().unwrap();
+        assert_eq!(commands(&requests), [0xa301, 0xa305, 0xa304]);
+        let limit = CommandResDTO::parse_from_bytes(&requests[1][FRAME_HEADER_LENGTH..]).unwrap();
+        assert_eq!(limit.data, "A:600,B:0,C:0\r");
+    }
+
+    #[test]
+    fn authentication_failure_refreshes_the_key_and_performance_mode_once() {
+        let command = |action: i32, key: [u8; 16]| -> crate::test_support::Reply {
+            Box::new(move |req| {
+                let response = CommandReqDTO {
+                    action,
+                    ..Default::default()
+                };
+                let payload = response.write_to_bytes().unwrap();
+                crate::test_support::encrypted_reply(req, 0xa205, &payload, &key)
+            })
+        };
+        let (port, dtu) = crate::test_support::fake_encrypted_dtu(vec![
+            encrypted_app_info(KEY),
+            command(33, KEY),
+            command(8, KEY),
+            // the DTU switched to another key, e.g. after a restart
+            encrypted_telemetry(OTHER_KEY),
+            encrypted_app_info(OTHER_KEY),
+            command(33, OTHER_KEY),
+            encrypted_telemetry(OTHER_KEY),
+        ]);
+        let mut inverter = Inverter::with_port_and_options("127.0.0.1", port, true, Some(80));
+        assert!(inverter.update_state().is_some());
+        assert_eq!(inverter.state(), NetworkState::Online);
+        // the power limit isn't set again, performance mode is
+        assert_eq!(
+            commands(&dtu.join().unwrap()),
+            [0xa301, 0xa305, 0xa305, 0xa311, 0xa301, 0xa305, 0xa311]
+        );
+    }
+
+    #[test]
+    fn repeated_authentication_failure_marks_the_inverter_offline() {
+        let (port, dtu) = crate::test_support::fake_encrypted_dtu(vec![
+            encrypted_app_info(KEY),
+            encrypted_telemetry(OTHER_KEY),
+            encrypted_app_info(KEY),
+            // fails again after the refresh
+            encrypted_telemetry(OTHER_KEY),
+            // the next cycle fails, and so does the refresh
+            encrypted_telemetry(OTHER_KEY),
+            Box::new(|_| Vec::new()),
+        ]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        for _ in 0..2 {
+            assert!(inverter.update_state().is_none());
+            assert_eq!(inverter.state(), NetworkState::Offline);
+        }
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn encrypted_dtu_with_invalid_enc_rand_is_offline() {
+        let (port, dtu) = crate::test_support::fake_dtu_raw(vec![Box::new(|req| {
+            crate::test_support::encrypted_app_info_reply(req, &[0x42; 15])
+        })]);
+        let mut inverter = Inverter::with_port("127.0.0.1", port);
+        assert!(inverter.update_state().is_none());
+        assert_eq!(inverter.state(), NetworkState::Offline);
+        assert!(inverter.capabilities.is_none());
+        dtu.join().unwrap();
+    }
+
+    #[test]
+    fn fetch_warnings_without_application_information_fails_gracefully() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert!(Inverter::with_port("127.0.0.1", port)
+            .fetch_warnings()
+            .is_none());
+    }
+
+    fn capabilities(dtu_serial_number: &str) -> Capabilities {
+        Capabilities {
+            encrypted: true,
+            enc_rand: Some(KEY.to_vec()),
+            dtu_serial_number: dtu_serial_number.to_string(),
+            firmware_version: 1,
+        }
+    }
+
+    #[test]
+    fn real_data_new_serial_number_falls_back_to_the_response() {
+        let mut response =
+            RealDataNewReqDTO::parse_from_bytes(&real_data_new_page(0, 1, 7, 0)).unwrap();
+        let serial = |response: &RealDataNewReqDTO, dtu: &str| {
+            map_real_data_new(response, &capabilities(dtu))
+                .unwrap()
+                .dtu_sn
+        };
+        assert_eq!(serial(&response, ""), "7");
+        response.device_serial_number = "4143".to_string();
+        assert_eq!(serial(&response, ""), "4143");
+        assert_eq!(serial(&response, "4144"), "4144");
+
+        response.sgs_data.clear();
+        assert!(map_real_data_new(&response, &capabilities("4144")).is_err());
+    }
+
+    #[test]
+    fn real_data_new_values_beyond_the_legacy_model_are_rejected() {
+        let mut response =
+            RealDataNewReqDTO::parse_from_bytes(&real_data_new_page(0, 1, 7, 0)).unwrap();
+        response.dtu_power = u64::MAX;
+        let error = map_real_data_new(&response, &capabilities("4144")).unwrap_err();
+        assert!(error.to_string().contains("dtu_power"));
+    }
+
+    #[test]
+    fn rejects_malformed_frames() {
+        let frame = build_frame(0xa211, 9, b"payload", false, None).unwrap();
+        let read = |frame: Vec<u8>| {
+            read_response(&mut io::Cursor::new(frame), 9, false, None, &[0xa211])
+                .unwrap_err()
+                .to_string()
+        };
+
+        let mut bad_magic = frame.clone();
+        bad_magic[0] = b'X';
+        assert!(read(bad_magic).contains("invalid Hoymiles frame header"));
+
+        let mut other_command = frame.clone();
+        other_command[3] = 0x04;
+        assert!(read(other_command).contains("unexpected Hoymiles response command"));
+
+        for length in [FRAME_HEADER_LENGTH - 1, MAX_FRAME_LENGTH + 1] {
+            let mut bad_length = frame.clone();
+            bad_length[8..10].copy_from_slice(&(length as u16).to_be_bytes());
+            assert!(read(bad_length).contains("invalid Hoymiles frame length"));
+        }
+    }
+
+    #[test]
+    fn command_responses_are_validated() {
+        let response = |action: i32, err_code: i32| CommandReqDTO {
+            action,
+            err_code,
+            ..Default::default()
+        };
+        assert!(validate_command_response(&response(0, 0), ACTION_LIMIT_POWER).is_ok());
+        assert!(validate_command_response(&response(8, 0), ACTION_LIMIT_POWER).is_ok());
+        let mismatch = validate_command_response(&response(33, 0), ACTION_LIMIT_POWER);
+        assert!(mismatch.unwrap_err().to_string().contains("mismatch"));
+        let failed = validate_command_response(&response(33, 2), ACTION_PERFORMANCE_DATA_MODE);
+        assert!(failed.unwrap_err().to_string().contains("error code 2"));
     }
 }

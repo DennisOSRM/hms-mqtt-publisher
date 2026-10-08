@@ -1,5 +1,6 @@
 // helpers shared by the unit tests
-use crate::inverter::FRAME_HEADER_LENGTH;
+use crate::crypto;
+use crate::inverter::{build_frame, ENCRYPTION_FLAG_BIT, FRAME_HEADER_LENGTH};
 use crate::mqtt_config::MqttConfig;
 use crate::mqtt_wrapper::{MqttWrapper, QoS};
 use crate::protos::hoymiles::APPInfomationData::{APPDtuInfoMO, APPInfoDataReqDTO};
@@ -193,4 +194,66 @@ pub fn app_info_reply(request: &[u8], dtu_sw_version: i32) -> Vec<u8> {
     response.dtu_serial_number = "414312345678".to_string();
     response.dtu_info = Some(info).into();
     frame_reply(request, 0xa201, &response.write_to_bytes().unwrap())
+}
+
+/// Starts a fake DTU that encrypts its traffic, answering `replies.len()` connections like
+/// `fake_dtu_raw`. Requests other than the application information are decrypted with the
+/// enc_rand of the last application information reply, then passed to the replies and recorded
+/// as plaintext frames. Replies are sent as they are, see `encrypted_reply`.
+pub fn fake_encrypted_dtu(replies: Vec<Reply>) -> (u16, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        let mut enc_rand: Option<Vec<u8>> = None;
+        for reply in replies {
+            let mut conn = accept(&listener);
+            let mut header = [0u8; FRAME_HEADER_LENGTH];
+            conn.read_exact(&mut header).unwrap();
+            let command = request_command(&header);
+            let len = u16::from_be_bytes([header[8], header[9]]) as usize;
+            let mut payload = vec![0u8; len - FRAME_HEADER_LENGTH];
+            conn.read_exact(&mut payload).unwrap();
+            if command != 0xa301 {
+                let mut tag = [0u8; 16];
+                conn.read_exact(&mut tag).unwrap();
+                payload.extend_from_slice(&tag);
+                let sequence = u16::from_be_bytes([header[4], header[5]]);
+                let key = enc_rand
+                    .as_deref()
+                    .expect("application information sent first");
+                payload = crypto::decrypt(key, command, sequence, &payload).unwrap();
+            }
+            let mut request = header.to_vec();
+            request.extend_from_slice(&payload);
+
+            let response = reply(&request);
+            if command == 0xa301 && !response.is_empty() {
+                let info =
+                    APPInfoDataReqDTO::parse_from_bytes(&response[FRAME_HEADER_LENGTH..]).unwrap();
+                enc_rand = Some(info.dtu_info.enc_rand.clone());
+            }
+            conn.write_all(&response).unwrap();
+            requests.push(request);
+        }
+        requests
+    });
+    (port, handle)
+}
+
+/// An application information reply (0xA201) of a DTU that encrypts with `enc_rand`
+pub fn encrypted_app_info_reply(request: &[u8], enc_rand: &[u8]) -> Vec<u8> {
+    let mut info = APPDtuInfoMO::new();
+    info.dfs = 1 << ENCRYPTION_FLAG_BIT;
+    info.enc_rand = enc_rand.to_vec();
+    let mut response = APPInfoDataReqDTO::new();
+    response.dtu_serial_number = "414312345678".to_string();
+    response.dtu_info = Some(info).into();
+    frame_reply(request, 0xa201, &response.write_to_bytes().unwrap())
+}
+
+/// An encrypted reply frame with command `cmd` to `request`, echoing its sequence number
+pub fn encrypted_reply(request: &[u8], cmd: u16, payload: &[u8], enc_rand: &[u8]) -> Vec<u8> {
+    let sequence = u16::from_be_bytes([request[4], request[5]]);
+    build_frame(cmd, sequence, payload, true, Some(enc_rand)).unwrap()
 }
