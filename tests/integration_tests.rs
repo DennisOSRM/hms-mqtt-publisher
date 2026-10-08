@@ -67,3 +67,21 @@ fn publish_one_message() {
     assert!(!mqtt.is_empty());
     assert_eq!(mqtt.len(), 1);
 }
+
+#[test]
+fn receive_defaults_to_no_messages() {
+    let mut mqtt = MqttTester::new(
+        &MqttConfig {
+            host: "frob".to_owned(),
+            port: None,
+            username: None,
+            password: None,
+            tls: None,
+            client_id: None,
+            device_id: None,
+            availability_topic: None,
+        },
+        "-test",
+    );
+    assert!(mqtt.receive().is_empty());
+}

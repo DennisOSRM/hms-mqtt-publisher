@@ -5,6 +5,7 @@ pub mod inverter;
 pub mod metric_collector;
 pub mod mqtt_config;
 pub mod mqtt_wrapper;
+pub mod poller;
 pub mod simple_mqtt;
 
 // internal interfaces

@@ -224,7 +224,7 @@ const ACTION_POWER_LIMIT: i32 = 8;
 /// Upper bound for the number of pages requested per reading
 const MAX_PAGES: i32 = 16;
 
-const HEADER_LEN: usize = 10;
+pub(crate) const HEADER_LEN: usize = 10;
 // replies grow with the number of inverters and ports; the app caps payloads at 4096 bytes
 const MAX_FRAME_LEN: usize = HEADER_LEN + 4096;
 
@@ -289,6 +289,7 @@ pub fn is_stale(response: &HMSStateResponse) -> bool {
 mod tests {
     use super::*;
     use crate::protos::hoymiles::RealData::{InverterState, PortState, ThreePhaseInverterState};
+    use crate::test_support::{fake_dtu, reply_to};
 
     fn response_with_links(links: &[i32]) -> HMSStateResponse {
         let mut response = HMSStateResponse::new();
@@ -317,44 +318,6 @@ mod tests {
     }
 
     const SEQ: u16 = 1;
-
-    /// Starts a fake DTU on localhost that answers `replies.len()` connections, one reply each.
-    /// Each reply closure gets the request frame and returns the bytes to send back.
-    /// Returns the port and a handle yielding the received request frames.
-    #[allow(clippy::type_complexity)]
-    fn fake_dtu(
-        replies: Vec<Box<dyn Fn(&[u8]) -> Vec<u8> + Send>>,
-    ) -> (u16, std::thread::JoinHandle<Vec<Vec<u8>>>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = std::thread::spawn(move || {
-            let mut requests = Vec::new();
-            for reply in replies {
-                let (mut conn, _) = listener.accept().unwrap();
-                let mut header = [0u8; HEADER_LEN];
-                conn.read_exact(&mut header).unwrap();
-                let len = u16::from_be_bytes([header[8], header[9]]) as usize;
-                let mut request = header.to_vec();
-                request.resize(len, 0);
-                conn.read_exact(&mut request[HEADER_LEN..]).unwrap();
-                conn.write_all(&reply(&request)).unwrap();
-                requests.push(request);
-            }
-            requests
-        });
-        (port, handle)
-    }
-
-    /// A DTU reply to `request` carrying `response`, with matching sequence number and valid CRC.
-    fn reply_to(request: &[u8], response: &HMSStateResponse) -> Vec<u8> {
-        let payload = response.write_to_bytes().unwrap();
-        let mut f = b"HM\xa2\x11".to_vec();
-        f.extend_from_slice(&request[4..6]);
-        f.extend_from_slice(&State::<MODBUS>::calculate(&payload).to_be_bytes());
-        f.extend_from_slice(&(HEADER_LEN as u16 + payload.len() as u16).to_be_bytes());
-        f.extend_from_slice(&payload);
-        f
-    }
 
     #[test]
     fn update_state_returns_fresh_reading_and_sends_valid_request() {
