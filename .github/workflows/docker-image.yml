@@ -68,7 +68,7 @@ jobs:
       - name: Extract metadata (labels) for Docker
         id: meta
         if: inputs.push
-        uses: docker/metadata-action@8e671d84a3bd81afdfc4fdbb96a42b07c2a80934
+        uses: docker/metadata-action@1ec73021df0717d8bef7700a897c064453280439
         with:
           images: ${{ env.IMAGE }}
 
@@ -139,7 +139,7 @@ jobs:
       # both metadata steps export DOCKER_METADATA_OUTPUT_* for the steps below
       - name: Extract metadata (nightly tags) for Docker
         if: inputs.nightly
-        uses: docker/metadata-action@8e671d84a3bd81afdfc4fdbb96a42b07c2a80934
+        uses: docker/metadata-action@1ec73021df0717d8bef7700a897c064453280439
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -148,7 +148,7 @@ jobs:
 
       - name: Extract metadata (release tags) for Docker
         if: ${{ !inputs.nightly }}
-        uses: docker/metadata-action@8e671d84a3bd81afdfc4fdbb96a42b07c2a80934
+        uses: docker/metadata-action@1ec73021df0717d8bef7700a897c064453280439
         with:
           images: ${{ env.IMAGE }}
 
