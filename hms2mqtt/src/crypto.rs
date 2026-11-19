@@ -100,7 +100,7 @@ fn crypt(
     let key = derive_key(enc_rand)?;
     let nonce = derive_nonce(enc_rand, command, sequence)?;
     let cipher = Aes128Gcm::new_from_slice(&key).map_err(|_| CryptoError::InvalidKey)?;
-    let nonce = Nonce::from_slice(&nonce);
+    let nonce = &Nonce::from(nonce);
     let aad = [command.to_le_bytes(), sequence.to_le_bytes()].concat();
 
     if encrypting {
